@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 (2026-10-01)
+
+- setup: pin the model downloads to Hugging Face commits and check their SHA-256
+
 ## 0.1.0 (2026-10-01)
 
 - setup: pin the Vulkan zip rebuilt without the build machine's home path

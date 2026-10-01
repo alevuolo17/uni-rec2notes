@@ -6,8 +6,8 @@ for the folder, the backend and the model; with options, or outside a terminal, 
 """
 
 import argparse
+import hashlib
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -17,11 +17,15 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import Abort, courses, paths, stopping, transcribe, ui
+from . import Abort, courses, paths, stopping, ui
 
 REPO_URL = "https://github.com/ggml-org/whisper.cpp"
-WHISPER_MODELS_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
-VAD_MODELS_URL = "https://huggingface.co/ggml-org/whisper-vad/resolve/main"
+# Hugging Face repos at pinned commits; models.sha256 lists every ggml-*.bin they hold with its SHA-256, as
+# https://huggingface.co/api/models/<repo>/tree/<commit> reports it (an LFS file's oid is its SHA-256).
+WHISPER_MODELS_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1"
+VAD_MODELS_URL = "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b"
+MODEL_CHECKSUMS = {name: sha256 for sha256, name in (
+    line.split() for line in Path(__file__).with_name("models.sha256").read_text(encoding="utf-8").splitlines())}
 CHUNK = 1 << 20
 WINDOWS_BUILDS = {  # backend: (version, url, sha256) of the whisper.cpp zip setup unzips on Windows
     "cpu": ("b5130", "https://github.com/ggml-org/whisper.cpp/releases/download/b5130/whisper-bin-x64.zip",
@@ -31,7 +35,7 @@ WINDOWS_BUILDS = {  # backend: (version, url, sha256) of the whisper.cpp zip set
                "2721d142b6676389da01408332275dc0e73d82e2f2492d56e56a83798ec03047"),
 }
 BACKENDS = ("auto", "vulkan", "cuda", "cpu")
-MODELS = {  # the interactive menu; --whisper-model takes any ggml model on Hugging Face
+MODELS = {  # the interactive menu; --whisper-model takes any whisper.cpp model in models.sha256
     "large-v3": "most accurate, 2.9 GB",
     "large-v3-turbo": "much faster, a small loss in accuracy, 1.5 GB",
     "large-v3-turbo-q5_0": "turbo compressed, the lightest, for the CPU backend, 0.5 GB",
@@ -58,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
                    help="vulkan: any GPU with a Vulkan driver; cuda: NVIDIA with the CUDA toolkit; cpu: no GPU. "
                         "auto (default): vulkan if glslc is installed, else cpu. On Windows: cpu (default) or vulkan")
     p.add_argument("--whisper-model", metavar="NAME",
-                   help=f"Whisper model to download (default: $REC2NOTES_WHISPER_MODEL, else {CPU_MODEL} on the cpu backend, "
+                   help=f"Whisper model to download, any of whisper.cpp's (default: $REC2NOTES_WHISPER_MODEL, else {CPU_MODEL} on the cpu backend, "
                         f"else {paths.default_whisper_model()})")
     args = p.parse_args(argv)
     backend = args.backend or "auto"
@@ -270,53 +274,56 @@ def install_prebuilt(backend: str) -> None:
         print(f"whisper.cpp: {version} ({backend}) already installed in {target}")
         return
     archive = paths.whisper_dir() / name
-    download(f"whisper.cpp {version}", url, archive)
+    download(f"whisper.cpp {version}", url, archive, sha256)
     try:
-        if transcribe.sha256_file(archive) != sha256:
-            raise Abort(f"the downloaded {name} does not match its checksum: deleted it, rerun setup")
-        try:
-            if target.exists():
-                shutil.rmtree(target)  # an older version's files would otherwise stay behind
-            with zipfile.ZipFile(archive) as z:
-                for info in z.infolist():
-                    if info.filename.startswith("Release/") and not info.is_dir():  # every file is under Release/
-                        file = target / info.filename.removeprefix("Release/")
-                        file.parent.mkdir(parents=True, exist_ok=True)
-                        with z.open(info) as src, open(file, "wb") as dst:
-                            shutil.copyfileobj(src, dst)
-            marker.write_text(sha256 + "\n", encoding="utf-8")
-        except OSError as e:
-            raise Abort(f"could not install whisper.cpp in {target}: {e}") from None
+        if target.exists():
+            shutil.rmtree(target)  # an older version's files would otherwise stay behind
+        with zipfile.ZipFile(archive) as z:
+            for info in z.infolist():
+                if info.filename.startswith("Release/") and not info.is_dir():  # every file is under Release/
+                    file = target / info.filename.removeprefix("Release/")
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    with z.open(info) as src, open(file, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+        marker.write_text(sha256 + "\n", encoding="utf-8")
+    except OSError as e:
+        raise Abort(f"could not install whisper.cpp in {target}: {e}") from None
     finally:
         archive.unlink(missing_ok=True)
     print(f"Installed whisper.cpp {version} ({backend}) in {target}")
 
 
 def download_models(model: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", model):  # it becomes a file name and a URL path
-        raise Abort(f"{model!r} is not a Whisper model name")
+    if f"ggml-{model}.bin" not in MODEL_CHECKSUMS or model.startswith("silero"):  # a known name holds no path
+        known = (n.removeprefix("ggml-").removesuffix(".bin") for n in MODEL_CHECKSUMS)
+        raise Abort(f"{model!r} is not a Whisper model setup knows. Pick one of: "
+                    + ", ".join(n for n in known if not n.startswith("silero")))
     for name, base, file in ((model, WHISPER_MODELS_URL, paths.whisper_model(model)),
                              (paths.VAD_MODEL, VAD_MODELS_URL, paths.vad_model())):
         if file.exists():
             print(f"Model {name}: already downloaded")
             continue
-        download(name, f"{base}/{file.name}", file)
+        download(name, f"{base}/{file.name}", file, MODEL_CHECKSUMS[file.name])
 
 
-def download(name: str, url: str, file: Path) -> None:
-    """Download url into file through a .part file, so an interrupted download leaves nothing behind."""
+def download(name: str, url: str, file: Path, sha256: str) -> None:
+    """Download url into file through a .part file, kept only when complete and its SHA-256 matches, so an
+    interrupted or tampered download leaves nothing behind."""
     file.parent.mkdir(parents=True, exist_ok=True)
     part = file.with_name(file.name + ".part")
     with ui.Console().step("Download", name) as step:
         try:
             with urllib.request.urlopen(url, timeout=60) as response, open(part, "wb") as out:
-                size, done = int(response.headers.get("Content-Length") or 0), 0
+                size, done, digest = int(response.headers.get("Content-Length") or 0), 0, hashlib.sha256()
                 while chunk := response.read(CHUNK):
                     out.write(chunk)
+                    digest.update(chunk)
                     done += len(chunk)
                     if size:
                         step.progress(min(done * 100 // size, 100))
                     stopping.check()
+            if digest.hexdigest() != sha256:
+                raise Abort(f"the downloaded {name} does not match its checksum: deleted it, rerun setup")
             os.replace(part, file)
         except BaseException as e:
             part.unlink(missing_ok=True)

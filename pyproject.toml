@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uni-rec2notes"
-version = "0.1.0"
+version = "0.1.1"
 description = "Complete a formatted lecture note from the lecture recording."
 requires-python = ">=3.11"
 
@@ -15,4 +15,4 @@ rec2notes = "rec2notes.__main__:main"
 packages = ["rec2notes"]
 
 [tool.setuptools.package-data]
-rec2notes = ["banner.txt", "prompts/*.md"]
+rec2notes = ["banner.txt", "models.sha256", "prompts/*.md"]

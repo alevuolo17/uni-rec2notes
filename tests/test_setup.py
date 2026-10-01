@@ -114,11 +114,13 @@ class Downloads(Served):
         super().setUp()
         self.point("WHISPER_MODELS_URL", self.url)
         self.point("VAD_MODELS_URL", self.url)
+        self.point("MODEL_CHECKSUMS", {})
         paths.whisper_model(MODEL).unlink()
         paths.vad_model().unlink()
 
     def serve(self, name, content):
         super().serve(f"ggml-{name}.bin", content)
+        setup.MODEL_CHECKSUMS[f"ggml-{name}.bin"] = hashlib.sha256(content).hexdigest()
 
     def download(self, model):
         out = io.StringIO()
@@ -139,19 +141,38 @@ class Downloads(Served):
         self.assertIn("Download", out)
 
     def test_a_downloaded_model_is_skipped(self):
+        self.serve("tiny", b"whisper bytes")
         self.add_model("tiny")
         self.add_model(paths.VAD_MODEL)
         self.assertIn("Model tiny: already downloaded", self.download("tiny"))
 
-    def test_an_unknown_model_leaves_nothing(self):
-        with self.assertRaisesRegex(Abort, "could not download nope: nothing at .*/ggml-nope.bin"):
+    def test_a_model_with_no_checksum_is_refused_before_downloading(self):
+        self.serve("tiny", b"whisper bytes")
+        self.serve(paths.VAD_MODEL, b"vad bytes")
+        (self.served / "ggml-nope.bin").write_bytes(b"unpinned")
+        with self.assertRaisesRegex(Abort, "'nope' is not a Whisper model setup knows. Pick one of: tiny$"):
             self.download("nope")
-        self.assertFalse(paths.whisper_model("nope").exists())
-        self.assertEqual(self.parts(), [])
+        self.assertEqual(sorted(p.name for p in paths.whisper_model("x").parent.iterdir()), [])
 
     def test_a_name_with_a_path_is_refused(self):
-        with self.assertRaisesRegex(Abort, "is not a Whisper model name"):
-            self.download("../x")
+        self.serve("tiny", b"whisper bytes")
+        for name in ("../x", "../ggml-tiny", "x/../tiny"):
+            with self.assertRaisesRegex(Abort, "is not a Whisper model setup knows"):
+                self.download(name)
+
+    def test_the_vad_model_is_not_a_whisper_model(self):
+        self.serve(paths.VAD_MODEL, b"vad bytes")
+        with self.assertRaisesRegex(Abort, "is not a Whisper model setup knows"):
+            self.download(paths.VAD_MODEL)
+
+    def test_a_wrong_checksum_leaves_nothing(self):
+        self.serve("tiny", b"whisper bytes")
+        self.serve(paths.VAD_MODEL, b"vad bytes")
+        (self.served / "ggml-tiny.bin").write_bytes(b"tampered bytes")
+        with self.assertRaisesRegex(Abort, "the downloaded tiny does not match its checksum"):
+            self.download("tiny")
+        self.assertFalse(paths.whisper_model("tiny").exists())
+        self.assertEqual(self.parts(), [])
 
     def test_a_stop_mid_download_leaves_nothing(self):
         self.serve("tiny", b"x" * (3 * setup.CHUNK))
@@ -160,6 +181,15 @@ class Downloads(Served):
             self.download("tiny")
         self.assertFalse(paths.whisper_model("tiny").exists())
         self.assertEqual(self.parts(), [])
+
+
+class ShippedChecksums(unittest.TestCase):
+    def test_every_model_setup_offers_has_a_checksum(self):
+        for windows in (False, True):
+            with mock.patch.object(paths, "WINDOWS", windows):
+                defaults = {setup.CPU_MODEL, paths.default_whisper_model()}
+            for model in [*setup.MODELS, *defaults, paths.VAD_MODEL]:
+                self.assertRegex(setup.MODEL_CHECKSUMS.get(f"ggml-{model}.bin", ""), "^[0-9a-f]{64}$", model)
 
 
 @mock.patch.object(paths, "WINDOWS", True)
