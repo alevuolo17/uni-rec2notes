@@ -67,3 +67,31 @@ class Folder(Sandbox):
         paths.pointer_file().write_text("folder = 'rec2notes'\n", encoding="utf-8")
         with self.assertRaisesRegex(Abort, "must be the absolute path"):
             paths.folder()
+
+
+class WhisperModelChoice(Sandbox):
+    def test_without_a_saved_model_it_is_the_platform_default(self):
+        self.assertIsNone(paths.saved_whisper_model())
+        self.assertEqual(paths.whisper_model_choice(), paths.default_whisper_model())
+
+    def test_the_saved_model_is_used(self):
+        paths.save_whisper_model("large-v3-turbo-q5_0")
+        self.assertEqual(paths.settings_file().read_text(encoding="utf-8"), 'whisper_model = "large-v3-turbo-q5_0"\n')
+        self.assertEqual(paths.whisper_model_choice(), "large-v3-turbo-q5_0")
+
+    def test_the_environment_beats_the_saved_model(self):
+        paths.save_whisper_model("large-v3-turbo-q5_0")
+        os.environ["REC2NOTES_WHISPER_MODEL"] = "tiny"
+        self.assertEqual(paths.whisper_model_choice(), "tiny")
+
+    def test_no_pointer_or_folder_means_no_saved_model(self):
+        shutil.rmtree(self.folder)
+        self.assertIsNone(paths.saved_whisper_model())
+        paths.pointer_file().unlink()
+        self.assertIsNone(paths.saved_whisper_model())
+
+    def test_a_broken_settings_file_is_named(self):
+        for text, error in (("whisper_model = \n", "settings.toml: "), ("whisper_model = 3\n", "must be a model name")):
+            (self.folder / "settings.toml").write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(Abort, error):
+                paths.whisper_model_choice()

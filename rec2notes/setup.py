@@ -62,8 +62,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="vulkan: any GPU with a Vulkan driver; cuda: NVIDIA with the CUDA toolkit; cpu: no GPU. "
                         "auto (default): vulkan if glslc is installed, else cpu. On Windows: cpu (default) or vulkan")
     p.add_argument("--whisper-model", metavar="NAME",
-                   help=f"Whisper model to download, any of whisper.cpp's (default: $REC2NOTES_WHISPER_MODEL, else {CPU_MODEL} on the cpu backend, "
-                        f"else {paths.default_whisper_model()})")
+                   help=f"Whisper model to download and use, any of whisper.cpp's (default: $REC2NOTES_WHISPER_MODEL, else the one "
+                        f"setup downloaded last, else {CPU_MODEL} on the cpu backend, else {paths.default_whisper_model()})")
     args = p.parse_args(argv)
     backend = args.backend or "auto"
     try:
@@ -95,12 +95,11 @@ def main(argv: list[str] | None = None) -> int:
                 clone()
                 download_models(model)
                 build(backend)
+            paths.save_whisper_model(model)
             ensure_folders_file()
         print(f"\nSetup complete. rec2notes folder: {paths.folder()}")
-        if model != default_model():
-            how = (f"run `setx REC2NOTES_WHISPER_MODEL {model}` and open a new terminal" if paths.WINDOWS
-                   else f"add `export REC2NOTES_WHISPER_MODEL={model}` to your shell profile")
-            print(f"rec2notes uses {default_model()} unless told otherwise: to use {model} by default, {how}.")
+        if (env := os.environ.get("REC2NOTES_WHISPER_MODEL")) and env != model:
+            print(f"$REC2NOTES_WHISPER_MODEL is set to {env}, which wins over {model}: remove it to use {model}.")
     except Abort as e:
         print(f"setup: {e}", file=sys.stderr)
         return 1
@@ -116,11 +115,11 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def default_model(backend: str | None = None) -> str:
-    """The model rec2notes uses; with a backend, the one setup fetches for it (turbo when that is the CPU)."""
-    if env := os.environ.get("REC2NOTES_WHISPER_MODEL"):
-        return env
-    if backend and choose_backend(backend)[0] == "cpu":
+def default_model(backend: str) -> str:
+    """The model setup fetches unless told otherwise: the one runs use, else turbo when the backend is the CPU."""
+    if chosen := os.environ.get("REC2NOTES_WHISPER_MODEL") or paths.saved_whisper_model():
+        return chosen
+    if choose_backend(backend)[0] == "cpu":
         return CPU_MODEL
     return paths.default_whisper_model()
 
@@ -190,7 +189,7 @@ def backend_menu() -> list[tuple[str, str]]:
 
 
 def model_menu(default: str) -> list[tuple[str, str]]:
-    models = MODELS if default in MODELS else {default: "from $REC2NOTES_WHISPER_MODEL", **MODELS}
+    models = MODELS if default in MODELS else {default: "your current model", **MODELS}
     return [(name, description + (", downloaded" if paths.whisper_model(name).exists() else ""))
             for name, description in models.items()]
 
@@ -357,7 +356,7 @@ def ensure_folders_file() -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "x", encoding="utf-8") as f:
         f.write(template)
-    print(f"Created {path}: uncomment each course's line and set this computer's vault folder for it.")
+    print(f"Created {path}. Add your courses: run `rec2notes`, then 3 Courses.")
 
 
 def _run(cmd: list[str], cwd=None) -> None:

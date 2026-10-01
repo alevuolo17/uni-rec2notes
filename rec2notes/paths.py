@@ -21,7 +21,7 @@ VAD_MODEL = "silero-v5.1.2"
 
 
 def default_whisper_model() -> str:
-    """large-v3, but turbo on Windows: whisper runs there on the CPU by default, where large-v3 is too slow."""
+    """Before setup has saved a model: large-v3, but turbo on Windows, where whisper runs on the CPU by default."""
     return "large-v3-turbo" if WINDOWS else "large-v3"
 
 
@@ -76,6 +76,37 @@ def write_pointer(folder: Path) -> None:
     pointer = pointer_file()
     pointer.parent.mkdir(parents=True, exist_ok=True)
     pointer.write_text(f"folder = {value}\n", encoding="utf-8")
+
+
+def settings_file() -> Path:
+    return folder() / "settings.toml"
+
+
+def saved_whisper_model() -> str | None:
+    """The Whisper model setup last downloaded into the rec2notes folder, or None before setup has saved one."""
+    pointed = pointed_folder()
+    if pointed is None:
+        return None
+    file = pointed / "settings.toml"
+    try:
+        with open(file, "rb") as f:
+            value = tomllib.load(f).get("whisper_model")
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except tomllib.TOMLDecodeError as e:
+        raise Abort(f"{file}: {e}") from None
+    if value is not None and not isinstance(value, str):
+        raise Abort(f"{file}: `whisper_model` must be a model name, such as \"large-v3-turbo\"")
+    return value or None
+
+
+def save_whisper_model(name: str) -> None:
+    settings_file().write_text(f"whisper_model = {json.dumps(name)}\n", encoding="utf-8")
+
+
+def whisper_model_choice() -> str:
+    """The Whisper model runs use: $REC2NOTES_WHISPER_MODEL, else the one setup downloaded, else the platform's."""
+    return os.environ.get("REC2NOTES_WHISPER_MODEL") or saved_whisper_model() or default_whisper_model()
 
 
 def courses_file() -> Path:

@@ -43,6 +43,13 @@ class Doctor(Sandbox):
         self.assertEqual(code, 1)
         self.assertIn(f"{paths.SETUP} --whisper-model {MODEL}", out)
 
+    def test_the_saved_model_is_the_one_checked(self):
+        paths.save_whisper_model("tiny")
+        code, out, _ = self.rec2notes("doctor")
+        self.assertEqual(code, 1)
+        self.assertIn("tiny is missing", out)
+        self.assertIn(f"{paths.SETUP} --whisper-model tiny", out)
+
     def test_no_rec2notes_folder_is_one_failure_with_the_fix(self):
         paths.pointer_file().unlink()
         code, out, err = self.rec2notes("doctor")
@@ -60,8 +67,10 @@ class Doctor(Sandbox):
         marks = {label: mark for mark, label, *_ in doctor.folders()}
         self.assertEqual(marks["Reti di calcolatori"], "ok")
         self.assertEqual(set(marks.values()), {"ok", "warn"})  # the other courses have no folder
+        self.assertEqual(doctor.folders()[1][3], "set it in `rec2notes` → 3 Courses → e, or pass --course analisi")
         self.write_folders("")
-        self.assertEqual(doctor.folders()[0][:3], ("fail", "Folders", "no course has a folder"))
+        self.assertEqual(doctor.folders()[0], ("fail", "Folders", "no course has a folder",
+                                               "add your courses, or set their folders, in `rec2notes` → 3 Courses"))
 
     def folder_rows(self, **folders):
         self.write_folders("".join(f"{slug} = '{folder}'\n" for slug, folder in folders.items()))

@@ -51,8 +51,7 @@ def build_parser() -> Parser:
 
 def add_whisper_option(p: argparse.ArgumentParser) -> None:
     p.add_argument("--whisper-model", metavar="NAME",
-                   default=os.environ.get("REC2NOTES_WHISPER_MODEL") or paths.default_whisper_model(),
-                   help=f"Whisper model, e.g. large-v3-turbo (default: $REC2NOTES_WHISPER_MODEL, else {paths.default_whisper_model()})")
+                   help="Whisper model, e.g. large-v3-turbo (default: $REC2NOTES_WHISPER_MODEL, else the one setup downloaded)")
 
 
 def add_agent_options(p: argparse.ArgumentParser) -> None:
@@ -100,6 +99,8 @@ def _checked(p: argparse.ArgumentParser, argv: list[str] | None) -> argparse.Nam
     args = p.parse_args(argv)
     if args.effort not in EFFORTS:
         p.error(f"--effort must be one of {', '.join(EFFORTS)}, not {args.effort!r}")
+    if "whisper_model" in args and not args.whisper_model:
+        args.whisper_model = paths.whisper_model_choice()
     return args
 
 
@@ -118,11 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     if not argv and not menu_wanted:  # bare `rec2notes` in a pipe: show what it is and how to use it
         build_parser().print_help()
         return 0
-    args = (None if menu_wanted else parse_clean_args(argv[1:]) if clean_only
-            else parse_create_args(argv[1:]) if create else parse_args(argv))
     console = ui.Console()
     prefix = console.style("rec2notes:", ui.BOLD, ui.RED) if console.err.isatty() else "rec2notes:"
     try:
+        args = (None if menu_wanted else parse_clean_args(argv[1:]) if clean_only
+                else parse_create_args(argv[1:]) if create else parse_args(argv))
         if menu_wanted:  # bare `rec2notes` in a terminal: the menu picks the run
             args = menu.hub(console, input, parse_args, parse_create_args)
             if args is None:
@@ -468,7 +469,7 @@ def write_output(output: Path, text: str, run_dir: Path, force: bool, reply_name
     if force and output.exists():
         shutil.copy2(output, run_dir / output.name)
     try:
-        with open(output, "w" if force else "x", encoding="utf-8") as f:
+        with open(output, "w" if force else "x", encoding="utf-8", newline="\n") as f:  # LF, as Obsidian writes
             f.write(text)
     except FileExistsError:
         raise Abort(f"{output} appeared during the run. The reply is in {run_dir / reply_name}; "

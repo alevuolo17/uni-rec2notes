@@ -205,12 +205,12 @@ def resolve_course(note: Path, courses: dict[str, Course], folders: dict[str, st
 
 def folders_template(courses: dict[str, Course]) -> str:
     lines = [
-        "# This computer's vault folder for each course (see the README).",
-        "# Uncomment a course's line and set the folder that holds its notes:",
-        '# a folder name, or a relative path such as "Uni/Reti".',
+        "# This computer's vault folder for each course: `rec2notes` → Courses fills it in.",
+        "# By hand: the absolute path of the folder that holds a course's notes, in single quotes,",
+        "# such as reti = 'C:\\Users\\me\\Appunti\\Reti' or reti = '/home/me/Appunti/Reti'.",
         "",
     ]
-    lines += [f'# {slug} = ""  # {course.name}' for slug, course in courses.items()]
+    lines += [f"# {slug} = ''  # {course.name}" for slug, course in courses.items()]
     return "\n".join(lines) + "\n"
 
 

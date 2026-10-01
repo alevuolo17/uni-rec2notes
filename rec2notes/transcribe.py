@@ -13,6 +13,7 @@ from pathlib import Path
 from . import Abort, paths, stopping
 
 PROGRESS = re.compile(r"progress =\s*(\d+)%")  # whisper-cli -pp, every 5%
+DLL_NOT_FOUND = 0xC0000135  # Windows' exit status for a program that can't start: whisper-cli without the VC++ runtime
 
 
 def sha256_file(path: Path) -> str:
@@ -122,6 +123,9 @@ def _run(cmd: list[str], log, failure: str, on_progress: Callable[[int], None] |
             raise
     stopping.check()
     code = proc.returncode
+    if paths.WINDOWS and code == DLL_NOT_FOUND:
+        raise Abort(f"{failure}: a DLL it needs is missing. Install the Visual C++ runtime with "
+                    "`winget install Microsoft.VCRedist.2015+.x64`, then run rec2notes again")
     if code:
         tail = Path(log.name).read_text(encoding="utf-8", errors="replace").splitlines()[-5:]
         raise Abort(f"{failure} (exit status {code}). Last lines of {log.name}:\n  " + "\n  ".join(tail))

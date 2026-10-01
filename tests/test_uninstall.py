@@ -20,9 +20,10 @@ class UninstallTest(Sandbox):
         cached = paths.transcript_cache(MODEL, "abc")
         cached.parent.mkdir(parents=True)
         cached.write_text("trascrizione\n", encoding="utf-8")
+        paths.save_whisper_model(MODEL)
         code, out, asked = self.uninstall("y")
         self.assertEqual((code, asked), (0, ["Delete them? [y/N] "]))
-        for name in ("courses.toml", "folders.toml", "whisper.cpp", "cache"):
+        for name in ("courses.toml", "folders.toml", "settings.toml", "whisper.cpp", "cache"):
             self.assertIn(str(self.folder / name), out)
         self.assertFalse(self.folder.exists())
         self.assertFalse(paths.pointer_file().exists())

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fake whisper-cli: takes its arguments only from a response file (`@file`, UTF-8, one per line, as rec2notes
 passes them), needs the -f audio to exist, writes a fixed transcript to <-of>.json, shaped like `-oj` output,
-and prints progress lines like `-pp`. FAKE_WHISPER_STOP_PARENT sends SIGTERM to its parent at 25%.
+and prints progress lines like `-pp`. FAKE_WHISPER_STOP_PARENT sends SIGTERM to its parent at 25%;
+FAKE_WHISPER_EXIT exits at once with that status and no output, like a whisper-cli that can't start.
 Every call appends its arguments, as a JSON line, to FAKE_WHISPER_LOG."""
 import json
 import os
@@ -9,6 +10,8 @@ import signal
 import sys
 import time
 
+if os.environ.get("FAKE_WHISPER_EXIT"):
+    sys.exit(int(os.environ["FAKE_WHISPER_EXIT"]))
 if len(sys.argv) != 2 or not sys.argv[1].startswith("@"):
     sys.exit(f"fake whisper-cli: expected only @file, got {sys.argv[1:]}")
 with open(sys.argv[1][1:], "rb") as f:

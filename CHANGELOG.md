@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 (2026-10-01)
+
+- transcribe: say to install the VC++ runtime when whisper-cli can't start
+- cli: write the vault notes with LF line endings on Windows too
+- setup, doctor: point a fresh install at the Courses screen
+- setup: save the Whisper model it downloads, and run with it
+
 ## 0.1.1 (2026-10-01)
 
 - setup: pin the model downloads to Hugging Face commits and check their SHA-256

@@ -1,5 +1,7 @@
 import json
+import os
 import unittest
+from unittest import mock
 
 from rec2notes import paths, transcribe
 
@@ -87,6 +89,15 @@ class Transcription(Sandbox):
         self.assertEqual(code, 0, err)
         (args,) = self.calls("whisper")
         self.assertEqual(args[args.index("--prompt") + 1], "Lezione: autenticità, integrità.")
+
+    def test_a_missing_dll_on_windows_names_the_vc_runtime(self):
+        os.environ["FAKE_WHISPER_EXIT"] = "53"  # the real status, 0xC0000135, doesn't fit in a Linux exit status
+        with mock.patch.object(transcribe, "DLL_NOT_FOUND", 53), mock.patch.object(paths, "WINDOWS", True):
+            code, _, err = self.rec2notes(self.note, self.audio, "--whisper-model", MODEL)
+        self.assertEqual(code, 1)
+        self.assertIn("whisper-cli failed on", err)
+        self.assertIn("a DLL it needs is missing. Install the Visual C++ runtime with "
+                      "`winget install Microsoft.VCRedist.2015+.x64`", err)
 
     def test_missing_model_fails_before_transcribing(self):
         code, _, err = self.rec2notes(self.note, self.audio, "--whisper-model", "medium")

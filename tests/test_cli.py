@@ -32,6 +32,20 @@ class Output(Sandbox):
         self.assertEqual(sorted(p.name for p in self.run_dirs()[0].iterdir()),
                          ["check.txt", "claude-stderr.txt", "input.txt", "p1.json", "reply.md", "whisper-args.txt", "whisper.log"])
         self.assertEqual(len(list(self.output.parent.iterdir())), 2, "nothing else may appear in the vault")
+        self.assertNotIn(b"\r\n", self.output.read_bytes())  # Windows' text mode would write CRLF
+
+    def test_runs_use_the_model_setup_saved(self):
+        paths.save_whisper_model("tiny")
+        self.add_model("tiny")
+        code, out, err = self.rec2notes(self.note, self.audio)
+        self.assertEqual(code, 0, err)
+        self.assertIn("✓ Transcribe  9s of audio · tiny", out)
+
+    def test_a_broken_settings_file_is_an_error_not_a_crash(self):
+        paths.settings_file().write_text("whisper_model = \n", encoding="utf-8")
+        code, _, err = self.rec2notes(self.note, self.audio)
+        self.assertEqual(code, 1)
+        self.assertIn(f"rec2notes: {paths.settings_file()}: ", err)
 
     def test_bare_command_prints_the_help_without_banner_off_a_terminal(self):
         code, out, err = self.rec2notes()
