@@ -1,0 +1,6 @@
+[00:00:05] buongiorno oggi parliamo di firewall
+[00:01:12] un firewall stateless guarda ogni pacchetto da solo in base a indirizzi e porte
+[00:02:40] lo stateful invece mantiene una tabella delle connessioni la state table
+[00:04:10] lo svantaggio dello stateful è che la tabella occupa memoria e si può saturare con un attacco dos
+[00:07:30] la dmz è la zona demilitarizzata ci mettiamo i server web e mail esposti su internet
+[00:09:02] all'esame vi chiedo sempre la differenza tra stateless e stateful

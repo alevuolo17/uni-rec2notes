@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""Fake ffmpeg: writes a silent 16 kHz mono WAV as the output (the last argument),
+one second long per byte of the input file (after -i)."""
+import os
+import sys
+import wave
+
+args = sys.argv[1:]
+seconds = os.path.getsize(args[args.index("-i") + 1])
+with wave.open(args[-1], "wb") as out:
+    out.setnchannels(1)
+    out.setsampwidth(2)
+    out.setframerate(16000)
+    out.writeframes(b"\0\0" * 16000 * seconds)

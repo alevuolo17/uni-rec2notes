@@ -1,0 +1,175 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
+    <img alt="rec2notes" src="docs/banner-light.svg" width="680">
+  </picture>
+</p>
+
+<p align="center">
+  <b>Complete your lecture notes from the lecture recording.</b><br>
+  Local Whisper transcription · a Claude merge · gaps filled, conflicts flagged, your words never rewritten.
+</p>
+
+<p align="center">
+  <a href="#install"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white"></a>
+  <a href="#install"><img alt="Windows and Linux" src="https://img.shields.io/badge/platform-Windows%20%C2%B7%20Linux-555555"></a>
+  <a href="https://github.com/ggml-org/whisper.cpp"><img alt="Transcription: whisper.cpp" src="https://img.shields.io/badge/transcription-whisper.cpp-555555"></a>
+  <a href="https://claude.com/claude-code"><img alt="Merge: Claude Code" src="https://img.shields.io/badge/merge-Claude%20Code-D97757?logo=claude&logoColor=white"></a>
+</p>
+
+---
+
+You record every lecture, but nobody listens to 90 minutes of audio again to fix their notes.
+**rec2notes does it for you.** It transcribes the recording on your own computer, then has Claude
+fill the gaps in your notes, flag what you wrote down wrong, and list what you missed, without
+rewriting a single word of yours.
+
+- ✍️ **Gaps filled**, in your note's own style: the definition you didn't catch, the step you skipped, your `[?]`.
+- ⚖️ **Mistakes flagged, not fixed**: your sentence stays, with a footnote saying what was said and when, so you decide.
+- 🧭 **Missed topics** collected at the end, each with its timestamp and where it fits.
+- 🔒 **Your note is never touched**: the result is a new file next to it, `<note> (completo).md`.
+- 📝 **Missed the lecture?** rec2notes writes a study note from the recording alone.
+
+```mermaid
+flowchart LR
+    audio["🎙️ Recording"] --> whisper["Whisper<br/>on your computer"]
+    whisper -->|timestamped transcript| claude["Claude<br/>(Claude Code)"]
+    note["📝 Your note"] --> claude
+    claude --> check{"Only additions?"}
+    check --> out["✅ note (completo).md"]
+```
+
+## Install
+
+You need a **Claude subscription** (Pro or higher) for the Claude Code CLI, and a Windows 11 or Linux PC. A GPU is optional but makes transcription several times faster.
+
+### Windows 11
+
+In Terminal (PowerShell):
+
+```powershell
+# Install Python and FFmpeg, which converts the recordings
+winget install Python.Python.3.13 Gyan.FFmpeg
+# Install Claude Code, the command-line Claude that rec2notes runs
+irm https://claude.ai/install.ps1 | iex
+# Log in to Claude Code with your Claude account
+claude auth login
+# Install pipx, which installs Python tools in their own environment
+py -m pip install --user pipx
+# Put pipx's tools folder on PATH, so rec2notes can be run by name
+py -m pipx ensurepath
+```
+
+Close and reopen Terminal, then:
+
+```powershell
+# Install rec2notes from this repository
+pipx install https://github.com/alevuolo17/uni-rec2notes/archive/refs/heads/main.zip
+# Download Whisper and its speech model into rec2notes' folder
+rec2notes setup
+```
+
+`setup` asks where to keep its folder (`C:\Users\<you>\rec2notes` by default), then **cpu** or **vulkan**: pick vulkan if you have an AMD, NVIDIA or Intel graphics card. It downloads a ready-made Whisper build and the speech model; nothing is compiled.
+
+### Linux
+
+<details>
+<summary>Install the packages first: Fedora, Debian/Ubuntu, Arch</summary>
+
+```sh
+# Fedora: pipx, the build tools, FFmpeg (from RPM Fusion, or ffmpeg-free) and the Vulkan tools
+sudo dnf install -y pipx cmake gcc-c++ make git ffmpeg vulkan-headers vulkan-loader-devel glslc spirv-tools spirv-headers-devel
+# Debian / Ubuntu 24.04+: the same packages under their names
+sudo apt install -y pipx build-essential cmake git ffmpeg libvulkan-dev glslc spirv-headers spirv-tools
+# Arch: the same packages under their names
+sudo pacman -S --needed python-pipx base-devel cmake git ffmpeg vulkan-headers vulkan-icd-loader shaderc spirv-headers spirv-tools
+```
+
+The Vulkan packages are only for GPU transcription; without them it runs on the CPU. Then install [Claude Code](https://claude.com/claude-code) and log in.
+</details>
+
+```sh
+# Install rec2notes from this repository
+pipx install https://github.com/alevuolo17/uni-rec2notes/archive/refs/heads/main.zip
+# Put pipx's tools folder on PATH (once), then open a new terminal
+pipx ensurepath
+# Build Whisper in ~/rec2notes and download its speech model
+rec2notes setup
+```
+
+### Check it
+
+```sh
+# Check every piece rec2notes needs, and print how to fix what's missing
+rec2notes doctor
+```
+
+## Use
+
+Type `rec2notes` in a terminal. A menu opens; type a number or letter and press Enter:
+
+```text
+  1  Run: complete a note, or create one, from a recording
+  2  Doctor: check that everything is set up
+  3  Courses: list them, add your own
+  4  Settings: where your rec2notes folder is
+  q  Quit
+```
+
+Wherever it asks for a file, you can type the path, paste it, or drag the file into the terminal.
+
+### First time: add your course
+
+**3 → a.** Give the course a short name (`reti`), its full name (`Reti di calcolatori`), and a vocabulary: one sentence with 15–30 key terms, mostly English terms and acronyms, so Whisper spells them right in Italian speech:
+
+```text
+Lezione di reti. Termini tecnici in inglese: TCP, UDP, handshake, routing, subnet, NAT, DNS, socket, …
+```
+
+Last, the folder that holds the course's notes. Every note in it, or in its subfolders, belongs to the course, so rec2notes won't ask again. **e** changes a course later.
+
+### Complete a note
+
+**1 → 1**, then:
+
+1. **Note**: the note you took in class.
+2. **Clean the note first?** Enter for no. Answer `y` if it's still raw: rec2notes tidies it into `<note> (pulito).md` and completes that copy.
+3. **Recording**: the lecture's audio. If it was recorded in parts, give the next part when asked, in order; Enter when there are no more.
+4. If the note isn't in one of your courses' folders, pick the course, and rec2notes offers to remember the folder.
+5. **A summary**: course, note, recording, and the Claude and Whisper models. Enter starts.
+
+You get `<note> (completo).md` next to your note. Look for the `[^conflitto-N]` footnotes, where your note and the lecture disagree, and the *Argomenti non presenti negli appunti* section at the end. If any of your words went missing, the terminal lists them; a filled-in `[?]` is expected there.
+
+### Create a note from a recording
+
+For a lecture you have no notes of: **1 → 2**. Give the full path of the new note (its folder must exist), the recording, and the course if asked. The note comes out at about a fifth of the transcript's length, organised by topic. Unclear audio is marked `[? hh:mm:ss]` and things shown only on a slide `(integra con slide)`.
+
+<details>
+<summary>All commands</summary>
+
+Everything the menu does is also a command, for scripts or if you prefer typing:
+
+| Command | What it does |
+|---|---|
+| `rec2notes` | The menu. |
+| `rec2notes NOTE AUDIO...` | Complete a note. `--clean` cleans it first; `--force` replaces an existing `(completo)` file; `--dry-run` shows what would be sent. |
+| `rec2notes create NOTE AUDIO...` | Write a new note from the recording. `--length PCT`: how long, as a share of the transcript (default 20). |
+| `rec2notes clean NOTE` | Only tidy a raw note into `<note> (pulito).md`. |
+| `rec2notes course add\|edit\|list` | Manage your courses and their note folders. |
+| `rec2notes doctor` | Check the setup. |
+| `rec2notes setup` | Install or change Whisper (backend, model). Safe to rerun. |
+| `rec2notes uninstall` | Delete rec2notes' folder; then `pipx uninstall uni-rec2notes`. |
+
+Every run also takes `--course`, `--whisper-model`, `--claude-model` and `--effort`; `rec2notes -h` lists them.
+</details>
+
+## Update and uninstall
+
+```sh
+# Update: reinstall rec2notes from the latest version
+pipx install --force https://github.com/alevuolo17/uni-rec2notes/archive/refs/heads/main.zip
+# Uninstall: delete rec2notes' folder, after asking; your notes are never touched
+rec2notes uninstall
+# Then remove the rec2notes command itself
+pipx uninstall uni-rec2notes
+```

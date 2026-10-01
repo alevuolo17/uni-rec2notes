@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+/build/
+*.egg-info/
+
+# No personal data in the repo: recordings, and whisper.cpp or its models
+# put here by mistake (they belong in ~/.local/share/uni-rec2notes/).
+*.aac
+*.flac
+*.m4a
+*.mp3
+*.mp4
+*.ogg
+*.opus
+*.wav
+*.webm
+ggml-*.bin
+/whisper.cpp/
+
+# Claude Code's per-user settings
+.claude/settings.local.json

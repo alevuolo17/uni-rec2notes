@@ -1,0 +1,489 @@
+"""rec2notes: complete a lecture note from its recording, into a sibling file."""
+
+import argparse
+import os
+import re
+import shlex
+import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from . import Abort, check, courses, doctor, menu, merge, paths, setup, stopping, transcribe, ui, uninstall
+
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+COMPLETED_MARKERS = ("[^conflitto-", check.MISSED_TOPICS_HEADING, "[^non-annotati]")  # the last: the old missed-topics footnote
+CREATE_LENGTH = 20  # the created note's length, in % of the transcript's words; to settle from real runs
+LONG_TRANSCRIPT_WORDS = 30_000  # about three hours of speech; past this a merge is slow and eats a lot of usage
+WARNING_PASSAGES = 5  # how many changed passages to show in the terminal; check.txt has all
+
+
+class Parser(argparse.ArgumentParser):
+    def print_help(self, file=None):
+        """The help, under the banner when it goes to a terminal wide enough for it."""
+        console = ui.Console(file or sys.stdout)
+        if console.banner():
+            console.line()
+        super().print_help(file)
+
+
+def build_parser() -> Parser:
+    p = Parser(
+        prog="rec2notes",
+        description="Complete a formatted lecture note from the lecture recording. "
+                    "Writes '<note> (completo).md' next to the note and never modifies the note.",
+    )
+    p.epilog = ("`rec2notes create NOTE AUDIO` writes a new note from a recording alone. "
+                "`rec2notes clean NOTE` cleans a raw note first. "
+                "`rec2notes doctor` checks that everything a run needs is in place; `rec2notes setup` installs it, `rec2notes uninstall` removes it.")
+    p.add_argument("note", type=Path, help="the formatted note (.md)")
+    p.add_argument("audio", type=Path, nargs="+", help="the recording; several files are parts of one lecture, in order")
+    p.add_argument("--course", metavar="SLUG", help="course slug, see `rec2notes course list` (default: from the note's folder)")
+    add_whisper_option(p)
+    add_agent_options(p)
+    p.add_argument("--clean", action="store_true",
+                   help="first clean the note into '<note> (pulito).md' (see `rec2notes clean`) and merge that copy")
+    p.add_argument("--force", action="store_true", help="replace an existing '(completo)' or '(pulito)' file, keeping a copy in the run directory")
+    p.add_argument("--dry-run", action="store_true", help="print the assembled input (cached transcripts only) and run nothing")
+    p.set_defaults(create=False)
+    return p
+
+
+def add_whisper_option(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--whisper-model", metavar="NAME",
+                   default=os.environ.get("REC2NOTES_WHISPER_MODEL") or paths.default_whisper_model(),
+                   help=f"Whisper model, e.g. large-v3-turbo (default: $REC2NOTES_WHISPER_MODEL, else {paths.default_whisper_model()})")
+
+
+def add_agent_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--effort", metavar="LEVEL", default=os.environ.get("REC2NOTES_EFFORT") or "high",
+                   help=f"claude effort: {', '.join(EFFORTS)} (default: $REC2NOTES_EFFORT, else high)")
+    p.add_argument("--claude-model", metavar="MODEL", default=os.environ.get("REC2NOTES_CLAUDE_MODEL"),
+                   help="claude model (default: $REC2NOTES_CLAUDE_MODEL, else Claude Code's default)")
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    return _checked(build_parser(), argv)
+
+
+def parse_clean_args(argv: list[str]) -> argparse.Namespace:
+    p = Parser(prog="rec2notes clean",
+               description="Clean a raw lecture note with the clean prompt. "
+                           "Writes '<note> (pulito).md' next to the note and never modifies the note.")
+    p.add_argument("note", type=Path, help="the raw note (.md)")
+    add_agent_options(p)
+    p.add_argument("--force", action="store_true", help="replace an existing '(pulito)' file, keeping a copy in the run directory")
+    return _checked(p, argv)
+
+
+def parse_create_args(argv: list[str]) -> argparse.Namespace:
+    p = Parser(prog="rec2notes create",
+               description="Write a new study note from a lecture recording alone, for a lecture with no notes. "
+                           "Writes NOTE, which must not exist yet.")
+    p.add_argument("note", type=Path, help="the note to create (.md); its folder tells the course")
+    p.add_argument("audio", type=Path, nargs="+", help="the recording; several files are parts of one lecture, in order")
+    p.add_argument("--course", metavar="SLUG", help="course slug, see `rec2notes course list` (default: from the note's folder)")
+    p.add_argument("--length", metavar="PCT", type=int, default=CREATE_LENGTH,
+                   help=f"the note's length to aim for, in %% of the transcript's words (default: {CREATE_LENGTH})")
+    add_whisper_option(p)
+    add_agent_options(p)
+    p.add_argument("--force", action="store_true", help="replace an existing NOTE, keeping a copy in the run directory")
+    p.add_argument("--dry-run", action="store_true", help="print the assembled input (cached transcripts only) and run nothing")
+    p.set_defaults(create=True)
+    args = _checked(p, argv)
+    if not 5 <= args.length <= 60:
+        p.error(f"--length must be between 5 and 60, not {args.length}")
+    return args
+
+
+def _checked(p: argparse.ArgumentParser, argv: list[str] | None) -> argparse.Namespace:
+    args = p.parse_args(argv)
+    if args.effort not in EFFORTS:
+        p.error(f"--effort must be one of {', '.join(EFFORTS)}, not {args.effort!r}")
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv == ["doctor"]:
+        return doctor.run(ui.Console())
+    if argv[:1] == ["setup"]:
+        return setup.main(argv[1:])
+    if argv[:1] == ["uninstall"]:
+        return uninstall.main(argv[1:])
+    if argv[:1] == ["course"]:
+        return course_command(argv[1:])
+    clean_only, create = argv[:1] == ["clean"], argv[:1] == ["create"]
+    menu_wanted = not argv and sys.stdin.isatty() and sys.stdout.isatty()
+    if not argv and not menu_wanted:  # bare `rec2notes` in a pipe: show what it is and how to use it
+        build_parser().print_help()
+        return 0
+    args = (None if menu_wanted else parse_clean_args(argv[1:]) if clean_only
+            else parse_create_args(argv[1:]) if create else parse_args(argv))
+    console = ui.Console()
+    prefix = console.style("rec2notes:", ui.BOLD, ui.RED) if console.err.isatty() else "rec2notes:"
+    try:
+        if menu_wanted:  # bare `rec2notes` in a terminal: the menu picks the run
+            args = menu.hub(console, input, parse_args, parse_create_args)
+            if args is None:
+                return 0
+        with stopping.handling():
+            if clean_only:
+                return run_clean(args, console)
+            return run_create(args, console) if args.create else run(args, console)
+    except Abort as e:
+        console.line(f"{prefix} {e}", err=True)
+        return 1
+    except stopping.Stopped as e:
+        console.line(f"{prefix} {e.message}", err=True)
+        return e.status
+
+
+def course_command(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="rec2notes course", description="List the courses, add one, or change one of your own.")
+    sub = p.add_subparsers(dest="action", required=True)
+    sub.add_parser("list", help="list the courses and this computer's folder for each")
+    add = sub.add_parser("add", help="add a course to courses.toml in your rec2notes folder")
+    add.add_argument("slug", help="short name used with --course, e.g. reti")
+    add.add_argument("name", help="the course name, shown to the merge step")
+    add.add_argument("vocab", help="Whisper's initial prompt: a sentence with 15-30 key terms")
+    add.add_argument("--folder", metavar="PATH", help="the folder of this course's notes in your vault, as an absolute path")
+    add.add_argument("--create", action="store_true", help="create the --folder if it doesn't exist")
+    edit = sub.add_parser("edit", help="change a course's name, vocab or folder")
+    edit.add_argument("slug", help="the course to change")
+    edit.add_argument("--slug", dest="new_slug", help="the new short name (its folder is kept)")
+    edit.add_argument("--name", help="the new course name")
+    edit.add_argument("--vocab", help="the new Whisper initial prompt")
+    edit.add_argument("--folder", metavar="PATH", help="the new folder of this course's notes, as an absolute path")
+    edit.add_argument("--create", action="store_true", help="create the --folder if it doesn't exist")
+    args = p.parse_args(argv)
+    try:
+        if args.action == "edit":
+            if args.slug not in courses.load_courses():
+                raise Abort(f"unknown course {args.slug!r} (courses: {', '.join(courses.load_courses())})")
+            if args.name is None and args.vocab is None and not args.folder and not args.new_slug:
+                raise Abort("nothing to change: pass --slug, --name, --vocab or --folder")
+            if args.new_slug:
+                courses.check_new_slug(args.new_slug)
+            folder = _folder_to_use(args)  # before anything is written
+            if args.name is not None or args.vocab is not None:
+                courses.update_course(args.slug, args.name, args.vocab)
+            if folder:
+                courses.set_folder(args.slug, str(folder))
+            if args.new_slug:  # last, so the other changes find the course under its old slug
+                courses.rename_course(args.slug, args.new_slug)
+            print(f"Updated course {args.new_slug or args.slug}")
+        elif args.action == "add":
+            folder = _folder_to_use(args)  # before anything is written
+            courses.add_course(args.slug, args.name, args.vocab)
+            print(f"Added course {args.slug} to {paths.courses_file()}")
+            if folder:
+                courses.set_folder(args.slug, str(folder))
+                print(f"Folder of {args.slug}: {folder}")
+        else:
+            all_courses = courses.load_courses()
+            folders = courses.load_folders(all_courses)
+            for slug, course in all_courses.items():
+                print(f"{slug:<10} {course.name}  [{folders.get(slug, 'no folder')}]")
+    except Abort as e:
+        print(f"rec2notes: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _folder_to_use(args: argparse.Namespace) -> Path | None:
+    """The checked --folder of `course add|edit`, created when --create says so."""
+    folder = courses.absolute_folder(args.folder) if args.folder else None
+    if folder:
+        courses.check_folder_free(folder, args.slug)
+    if folder and not folder.is_dir():
+        if not args.create:
+            raise Abort(f"{folder} does not exist (pass --create to make it)")
+        try:
+            folder.mkdir(parents=True)
+        except OSError as e:
+            raise Abort(f"could not create {folder}: {e.strerror}") from None
+    return folder
+
+
+def run(args: argparse.Namespace, console: ui.Console) -> int:
+    given = [args.note, *args.audio]
+    note = Path(os.path.abspath(args.note))
+    if not note.is_file():
+        raise Abort(f"note not found: {args.note}{_unquoted_hint(given, 0)}")
+    for i, audio in enumerate(args.audio, 1):
+        if not audio.is_file():
+            raise Abort(f"audio file not found: {audio}{_unquoted_hint(given, i)}")
+    note_text = note.read_text(encoding="utf-8")
+    if any(marker in note_text for marker in COMPLETED_MARKERS):
+        raise Abort(f"{note.name} already has conflict footnotes or missed topics, "
+                    "so it looks like a completed note. Pass the original note instead.")
+    cleaned = clean_path(note)
+    if args.clean:
+        check_free(cleaned, args.force)
+    merged = cleaned if args.clean else note  # the note the merge completes
+    output = merged.with_name(f"{merged.stem} (completo).md")
+    check_free(output, args.force)
+
+    all_courses = courses.load_courses()
+    folders = {} if args.course else courses.load_folders(all_courses)
+    course = courses.resolve_course(note, all_courses, folders, args.course)
+    caches = [paths.transcript_cache(args.whisper_model, transcribe.sha256_file(a)) for a in args.audio]
+
+    if args.dry_run:
+        return dry_run(args, course, note_text, caches)
+
+    preflight(args.whisper_model, need_whisper=not all(c.exists() for c in caches))
+    run_dir = make_run_dir(note.stem)
+    console.header(course.name, note.name)
+    if args.clean:
+        note_text = clean_note(note_text, cleaned, run_dir, args, console)
+
+    transcript = transcribe_all(args, course, caches, run_dir, console)
+    confirm_size(transcript, console)
+    input_text = merge.build_input(course, note_text, transcript)
+    (run_dir / "input.txt").write_text(input_text, encoding="utf-8")
+    with console.step("Merge", agent_detail(args)) as step:
+        reply = merge.run_claude(input_text, run_dir, args.effort, args.claude_model,
+                                 notify=lambda message: step.note("warn", message))
+        step.end("ok", step.detail, ui.duration(step.elapsed))
+    if not reply.endswith("\n"):
+        reply += "\n"
+
+    changes = check.missing_passages(note_text, reply)
+    conflicts, missed = check.summary(reply)
+    (run_dir / "check.txt").write_text(check.report(changes, conflicts, missed), encoding="utf-8")
+    if changes:
+        console.mark("warn", "Check", f"{len(changes)} passage{'s' if len(changes) > 1 else ''} missing or changed")
+    else:
+        console.mark("ok", "Check", "only additions")
+    if check.TRANSCRIPT_MISMATCH in reply:
+        console.mark("warn", "Check", "Claude says the transcript doesn't match this note")
+    stopping.check()
+    write_output(output, reply, run_dir, args.force)
+    console.mark("ok", "Write", output.name)
+
+    rows = [("Conflicts", [str(conflicts)], (ui.DIM,)), ("Missed topics", ["yes" if missed else "no"], (ui.DIM,))]
+    if changes:
+        shown = [check.describe(c, width=60) for c in changes[:WARNING_PASSAGES]]
+        if len(changes) > WARNING_PASSAGES:
+            shown.append(f"…and {len(changes) - WARNING_PASSAGES} more, see check.txt")
+        rows.append(("Changed", shown, (ui.YELLOW,)))
+    rows.append(("Run", [_home(run_dir)], (ui.DIM,)))
+    console.line()
+    console.summary(rows)
+    return 0
+
+
+def transcribe_all(args: argparse.Namespace, course: courses.Course, caches: list[Path], run_dir: Path,
+                   console: ui.Console) -> str:
+    """Transcribe each part not cached yet; returns the whole lecture's transcript."""
+    for part, (audio, cache) in enumerate(zip(args.audio, caches), 1):
+        which = f"part {part}/{len(args.audio)} · " if len(args.audio) > 1 else ""
+        if cache.exists():
+            console.mark("ok", "Transcribe", f"{which}cached · {args.whisper_model}")
+            continue
+        with console.step("Transcribe", f"{which}{audio.name} · {args.whisper_model}") as step:
+            seconds = transcribe.transcribe(audio, cache, args.whisper_model, course.vocab, run_dir, part, step.progress)
+            length = f"{ui.duration(seconds)} of audio · " if seconds else ""
+            step.end("ok", f"{which}{length}{args.whisper_model}", ui.duration(step.elapsed))
+    transcript = transcribe.label_parts([c.read_text(encoding="utf-8") for c in caches])
+    if not transcript.strip():
+        raise Abort("the transcript is empty: Whisper found no speech in the audio")
+    return transcript
+
+
+def run_create(args: argparse.Namespace, console: ui.Console) -> int:
+    output = Path(os.path.abspath(args.note))
+    if output.suffix.lower() != ".md":
+        output = output.with_name(output.name + ".md")
+    given = [args.note, *args.audio]
+    for i, audio in enumerate(args.audio, 1):
+        if not audio.is_file():
+            raise Abort(f"audio file not found: {audio}{_unquoted_hint(given, i)}")
+    if not output.parent.is_dir():
+        raise Abort(f"the note's folder does not exist: {output.parent}")
+    check_free(output, args.force)
+
+    all_courses = courses.load_courses()
+    folders = {} if args.course else courses.load_folders(all_courses)
+    course = courses.resolve_course(output, all_courses, folders, args.course)
+    caches = [paths.transcript_cache(args.whisper_model, transcribe.sha256_file(a)) for a in args.audio]
+
+    if args.dry_run:
+        transcript = cached_transcript(args, caches)
+        words = spoken_words(transcript)
+        sys.stdout.write(merge.build_create_input(course, transcript, words, target_words(words, args.length)))
+        command = merge.claude_command(args.effort, args.claude_model, paths.CREATE_PROMPT)
+        print(f"(dry run) would pipe this to: {shlex.join(command)}", file=sys.stderr)
+        return 0
+
+    preflight(args.whisper_model, need_whisper=not all(c.exists() for c in caches))
+    run_dir = make_run_dir(output.stem)
+    console.header(course.name, output.name)
+    transcript = transcribe_all(args, course, caches, run_dir, console)
+    confirm_size(transcript, console)
+    words = spoken_words(transcript)
+    input_text = merge.build_create_input(course, transcript, words, target_words(words, args.length))
+    (run_dir / "input.txt").write_text(input_text, encoding="utf-8")
+    with console.step("Create", f"{agent_detail(args)} · length {args.length}%") as step:
+        reply = merge.run_claude(input_text, run_dir, args.effort, args.claude_model,
+                                 notify=lambda message: step.note("warn", message), prompt=paths.CREATE_PROMPT)
+        step.end("ok", step.detail, ui.duration(step.elapsed))
+    if not reply.endswith("\n"):
+        reply += "\n"
+    stopping.check()
+    write_output(output, reply, run_dir, args.force)
+    console.mark("ok", "Write", output.name)
+
+    note_words = len(reply.split())
+    length = f"{note_words:,} words, {round(100 * note_words / max(words, 1))}% of the transcript (aimed at {args.length}%)"
+    console.line()
+    console.summary([("Length", [length], (ui.DIM,)), ("Run", [_home(run_dir)], (ui.DIM,))])
+    return 0
+
+
+def spoken_words(transcript: str) -> int:
+    """The transcript's words, without its timestamps."""
+    return len(re.sub(r"^\[[^\]]*\]", "", transcript, flags=re.M).split())
+
+
+def target_words(words: int, percent: int) -> int:
+    return max(100, round(words * percent / 100, -2))
+
+
+def confirm_size(transcript: str, console: ui.Console) -> None:
+    """Show the transcript's size before the merge; when it is unusually long, ask on a terminal, else warn."""
+    words = len(transcript.split())
+    if words <= LONG_TRANSCRIPT_WORDS:
+        console.mark("ok", "Transcript", f"{words:,} words")
+        return
+    console.mark("warn", "Transcript", f"{words:,} words, unusually long")
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            answer = input("The merge will be slow and use a lot of your agent's quota. Continue? [Y/n] ")
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer.strip().lower() in ("n", "no"):
+            raise Abort("stopped before the merge; the transcript is cached, so a rerun skips transcribing")
+
+
+def run_clean(args: argparse.Namespace, console: ui.Console) -> int:
+    note = Path(os.path.abspath(args.note))
+    if not note.is_file():
+        raise Abort(f"note not found: {args.note}")
+    note_text = note.read_text(encoding="utf-8")
+    output = clean_path(note)
+    check_free(output, args.force)
+    preflight(paths.default_whisper_model(), need_whisper=False)
+    run_dir = make_run_dir(note.stem)
+    clean_note(note_text, output, run_dir, args, console)
+    console.line()
+    console.summary([("Run", [_home(run_dir)], (ui.DIM,))])
+    return 0
+
+
+def clean_path(note: Path) -> Path:
+    return note.with_name(f"{note.stem} (pulito).md")
+
+
+def clean_note(note_text: str, output: Path, run_dir: Path, args: argparse.Namespace, console: ui.Console) -> str:
+    """Clean the note with the agent and write the result to `output`; returns the cleaned text."""
+    with console.step("Clean", agent_detail(args)) as step:
+        reply = merge.run_claude(note_text, run_dir, args.effort, args.claude_model,
+                                 notify=lambda message: step.note("warn", message),
+                                 prompt=paths.CLEAN_PROMPT, file_prefix="clean-")
+        step.end("ok", step.detail, ui.duration(step.elapsed))
+    if not reply.endswith("\n"):
+        reply += "\n"
+    stopping.check()
+    write_output(output, reply, run_dir, args.force, "clean-reply.md")
+    console.mark("ok", "Write", output.name)
+    return reply
+
+
+def agent_detail(args: argparse.Namespace) -> str:
+    claude = f"claude {args.claude_model}" if args.claude_model else "claude"
+    return f"{claude} · effort {args.effort}"
+
+
+def check_free(output: Path, force: bool) -> None:
+    if output.exists() and not force:
+        raise Abort(f"{output} already exists. Pass --force to replace it (the old file is kept in the run directory).")
+
+
+def dry_run(args: argparse.Namespace, course: courses.Course, note_text: str, caches: list[Path]) -> int:
+    if args.clean:
+        print("(dry run) would first clean the note; the input below is the note as it is", file=sys.stderr)
+    sys.stdout.write(merge.build_input(course, note_text, cached_transcript(args, caches)))
+    print(f"(dry run) would pipe this to: {shlex.join(merge.claude_command(args.effort, args.claude_model))}",
+          file=sys.stderr)
+    return 0
+
+
+def cached_transcript(args: argparse.Namespace, caches: list[Path]) -> str:
+    """The transcript a dry run shows: the cached parts, and a placeholder for each part not transcribed yet."""
+    parts = []
+    for audio, cache in zip(args.audio, caches):
+        if cache.exists():
+            parts.append(cache.read_text(encoding="utf-8"))
+        else:
+            print(f"(dry run) no cached {args.whisper_model} transcript of {audio.name}; a real run would transcribe it",
+                  file=sys.stderr)
+            parts.append(f"(not transcribed yet: {audio.name})\n")
+    return transcribe.label_parts(parts)
+
+
+def preflight(model: str, need_whisper: bool) -> None:
+    """Fail before a long transcription, not after it."""
+    problems = []
+    if not shutil.which("claude"):
+        problems.append("claude (Claude Code) is not on PATH")
+    if need_whisper:
+        if not shutil.which("ffmpeg"):
+            problems.append("ffmpeg is not installed")
+        if not transcribe.whisper_cli():
+            problems.append(f"whisper-cli is not built; run {paths.SETUP}")
+        for model_file in (paths.whisper_model(model), paths.vad_model()):
+            if not model_file.exists():
+                problems.append(f"{model_file} is missing; run {paths.SETUP} --whisper-model {model}")
+    if problems:
+        raise Abort("cannot start:\n  - " + "\n  - ".join(problems))
+
+
+def make_run_dir(note_stem: str) -> Path:
+    base = paths.runs_dir() / f"{datetime.now():%Y-%m-%d_%H%M%S}_{note_stem}"
+    run_dir, n = base, 1
+    while True:
+        try:
+            run_dir.mkdir(parents=True)
+            return run_dir
+        except FileExistsError:
+            n += 1
+            run_dir = base.with_name(f"{base.name}-{n}")
+
+
+def write_output(output: Path, text: str, run_dir: Path, force: bool, reply_name: str = "reply.md") -> None:
+    """One write straight into the vault: no temporary or partial files for Obsidian Sync to pick up."""
+    if force and output.exists():
+        shutil.copy2(output, run_dir / output.name)
+    try:
+        with open(output, "w" if force else "x", encoding="utf-8") as f:
+            f.write(text)
+    except FileExistsError:
+        raise Abort(f"{output} appeared during the run. The reply is in {run_dir / reply_name}; "
+                    "rerun with --force to replace the file.") from None
+
+
+def _home(path: Path) -> str:
+    home = str(Path.home())
+    return "~" + str(path)[len(home):] if str(path).startswith(home + os.sep) else str(path)
+
+
+def _unquoted_hint(given: list[Path], i: int) -> str:
+    """If given[i] and the arguments after it, joined with spaces, name a file, the shell split an unquoted path."""
+    for j in range(i + 1, len(given)):
+        joined = " ".join(str(p) for p in given[i:j + 1])
+        if Path(joined).is_file():
+            return f'\nIts path has spaces and was split by the shell: put it in quotes: "{joined}"'
+    return ""
