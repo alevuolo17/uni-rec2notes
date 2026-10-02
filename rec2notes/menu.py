@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from . import Abort, courses, doctor, paths, ui
+from . import Abort, courses, doctor, merge, paths, setup, transcribe, ui
 
 
 class Quit(Exception):
@@ -17,6 +17,7 @@ class Quit(Exception):
 
 
 Parse = Callable[[list[str]], argparse.Namespace]
+CLAUDE_MODELS = (None, "opus", "sonnet", "haiku")  # None: Claude Code's default; the aliases follow its latest models
 
 
 def hub(console: ui.Console, ask: Callable[[str], str], parse: Parse, parse_create: Parse) -> argparse.Namespace | None:
@@ -56,7 +57,7 @@ def _options(console: ui.Console) -> None:
     console.line(f"  {console.style('1', ui.CYAN)}  Run: complete a note, or create one, from a recording")
     console.line(f"  {console.style('2', ui.CYAN)}  Doctor: check that everything is set up")
     console.line(f"  {console.style('3', ui.CYAN)}  Courses: list them, add your own")
-    console.line(f"  {console.style('4', ui.CYAN)}  Settings: where your rec2notes folder is")
+    console.line(f"  {console.style('4', ui.CYAN)}  Settings: your rec2notes folder, default model, effort and Whisper")
     console.line(f"  {console.style('q', ui.CYAN)}  Quit")
     console.line()
 
@@ -79,17 +80,12 @@ def _guided_run(console, ask, parse) -> argparse.Namespace | None:
     audio = _ask_recordings(console, ask)
     course = _pick_course(console, ask, note)
     args = parse([str(note), *map(str, audio), "--course", course.slug, *(["--clean"] if clean else [])])
-
-    console.line()
-    console.summary([
+    return _confirm(console, ask, args, [
         ("Course", [course.name], ()),
         ("Note", [note.name], ()),
         *([("Clean", ["yes, then merge the cleaned copy"], ())] if clean else []),
         ("Recording", [a.name for a in audio], ()),
-        *_settings_rows(args),
     ])
-    console.line()
-    return args if _yes(console, ask, "Start? [Y/n] ") else None
 
 
 def _guided_create(console, ask, parse) -> argparse.Namespace | None:
@@ -97,23 +93,45 @@ def _guided_create(console, ask, parse) -> argparse.Namespace | None:
     audio = _ask_recordings(console, ask)
     course = _pick_course(console, ask, note)
     args = parse([str(note), *map(str, audio), "--course", course.slug])
-
-    console.line()
-    console.summary([
+    return _confirm(console, ask, args, [
         ("Course", [course.name], ()),
         ("New note", [note.name], ()),
         ("Recording", [a.name for a in audio], ()),
         ("Length", [f"about {args.length}% of the transcript"], ()),
-        *_settings_rows(args),
     ])
-    console.line()
-    return args if _yes(console, ask, "Start? [Y/n] ") else None
+
+
+def _confirm(console, ask, args: argparse.Namespace, rows: list[tuple[str, list[str], tuple]]) -> argparse.Namespace | None:
+    """Show what will run, with the settings and anything that stops it; Enter starts it, `c` changes the
+    settings for this run only."""
+    sums = [transcribe.sha256_file(a) for a in args.audio]
+    while True:
+        console.line()
+        console.summary([*rows, *_settings_rows(args)])
+        console.line()
+        problems = doctor.start_problems(args.whisper_model, [paths.transcript_cache(args.whisper_model, s) for s in sums])
+        if problems:
+            console.line("Can't start yet:")
+            for problem in problems:
+                console.line(f"  - {problem}")
+            console.line()
+        prompt, answers = (("c to change settings, n to cancel: ", ("c", "n", "no")) if problems else
+                           ("Start? [Y/n, c to change settings] ", ("", "y", "yes", "c", "n", "no")))
+        while (answer := _ask(ask, prompt, allow_empty=True).lower()) not in answers:
+            console.line("Type c or n." if problems else "Type y, n or c.")
+        if answer in ("n", "no"):
+            return None
+        if answer != "c":
+            return args
+        args.claude_model = _ask_claude_model(console, ask, args.claude_model)
+        args.effort = _ask_effort(console, ask, args.effort)
+        args.whisper_model = _ask_whisper_model(console, ask, args.whisper_model) or args.whisper_model
 
 
 def _settings_rows(args: argparse.Namespace) -> list[tuple[str, list[str], tuple]]:
     return [
         ("Agent", ["claude"], ()),
-        ("Model", [args.claude_model or "Claude Code's default"], ()),
+        ("Model", [_model_name(args.claude_model)], ()),
         ("Effort", [args.effort], ()),
         ("Whisper", [args.whisper_model], ()),
     ]
@@ -131,11 +149,13 @@ def _ask_recordings(console, ask) -> list[Path]:
 def _ask_new_note(console, ask) -> Path:
     """The path of a note to create: in a folder that exists, not taken; ".md" is added when missing."""
     while True:
-        note = Path(os.path.abspath(os.path.expanduser(_clean(_ask(ask, "New note, full path (.md): ")))))
+        typed = _clean(_ask(ask, "New note (.md), its full path; ~ is your home folder: "))
+        note = Path(os.path.abspath(os.path.expanduser(typed)))
         if note.suffix.lower() != ".md":
             note = note.with_name(note.name + ".md")
         if not note.parent.is_dir():
-            console.line(f"No such folder: {note.parent}")
+            hint = " Variables like $HOME aren't expanded here: use ~ for your home folder." if "$" in typed or "%" in typed else ""
+            console.line(f"No such folder: {note.parent}.{hint}")
         elif note.exists():
             console.line(f"{note} already exists: pick another name.")
         else:
@@ -143,34 +163,36 @@ def _ask_new_note(console, ask) -> Path:
 
 
 def _pick_course(console, ask, note: Path) -> courses.Course:
-    """The course from the note's folder; if that tells nothing, the one the user picks (or adds), and remembers."""
+    """The course the user picks, or adds; the one whose folder holds the note, if any, is picked by Enter."""
     all_courses = courses.load_courses()
-    try:
-        return courses.resolve_course(note, all_courses, courses.load_folders(all_courses))
-    except Abort:
-        pass
-    console.line("Which course is this?")
     slugs = list(all_courses)
-    for i, slug in enumerate(slugs, 1):
-        console.line(f"  {console.style(str(i), ui.CYAN)}  {all_courses[slug].name}")
-    console.line(f"  {console.style('n', ui.CYAN)}  A new course")
-    while True:
-        choice = _ask(ask, "> ").lower()
-        if choice == "n":
-            course = _new_course(console, ask)
-            break
-        if choice.isascii() and choice.isdecimal() and 1 <= int(choice) <= len(slugs):
-            course = all_courses[slugs[int(choice) - 1]]
-            break
-        console.line(f"Type a number from 1 to {len(slugs)}, or n.")
     try:
-        courses.check_folder_free(note.parent, course.slug)
-    except Abort as e:
-        console.line(f"Not remembering the folder: {e}")
-    else:
-        if _yes(console, ask, f"Remember {note.parent} as the folder of {course.name}? [Y/n] "):
-            courses.set_folder(course.slug, str(note.parent))
-    return course
+        default = slugs.index(courses.resolve_course(note, all_courses, courses.load_folders(all_courses)).slug)
+    except Abort:
+        default = None
+    labels = [all_courses[s].name + ("  (from the note's folder)" if i == default else "") for i, s in enumerate(slugs)]
+    i = _pick(console, ask, "Which course is this?", labels, default, new="A new course")
+    return _new_course(console, ask) if i is None else all_courses[slugs[i]]
+
+
+def _pick(console, ask, question: str, labels: list[str], default: int | None = None,
+          new: str | None = None) -> int | None:
+    """The index of the label the user picks, `default` on Enter; None for `n`, offered when `new` names it."""
+    console.line(question)
+    for i, label in enumerate(labels, 1):
+        console.line(f"  {console.style(str(i), ui.CYAN)}  {label}")
+    if new:
+        console.line(f"  {console.style('n', ui.CYAN)}  {new}")
+    prompt = "> " if default is None else f"[{default + 1}] > "
+    while True:
+        choice = _ask(ask, prompt, allow_empty=default is not None).lower()
+        if not choice:
+            return default
+        if new and choice == "n":
+            return None
+        if choice.isascii() and choice.isdecimal() and 1 <= int(choice) <= len(labels):
+            return int(choice) - 1
+        console.line(f"Type a number from 1 to {len(labels)}{', or n' if new else ''}.")
 
 
 def _courses(console, ask) -> None:
@@ -244,8 +266,8 @@ def _new_course(console, ask, with_folder: bool = False) -> courses.Course:
     if folder:
         console.line(f"Added {name}, with the folder {folder}.")
     elif with_folder:
-        console.line(f"Added {name}. No folder set: a run will ask which course a note belongs to, "
-                     f"or put {slug} = \"/absolute/path\" in {paths.folders_file()}.")
+        console.line(f"Added {name}. No folder set, so a run won't pre-select it for a note; "
+                     f"to set one, edit the course here or put {slug} = \"/absolute/path\" in {paths.folders_file()}.")
     else:
         console.line(f"Added {name}.")
     return courses.load_courses()[slug]
@@ -276,8 +298,9 @@ def _ask_folder(console, ask, slug: str, keep: bool = False) -> str | None:
 
 
 def _settings(console, ask) -> None:
-    """Show the rec2notes folder, and point to it where the user moved it. It reads the pointer, not
-    `paths.folder()`, so it works while the folder is missing: that is when it is needed."""
+    """Show the rec2notes folder and the defaults runs use; point to the folder where the user moved it, change
+    a default. The folder comes from the pointer, not `paths.folder()`, so this works while the folder is missing:
+    that is when it is needed."""
     while True:
         folder = paths.pointed_folder()
         if folder is None:
@@ -286,16 +309,58 @@ def _settings(console, ask) -> None:
             shown = str(folder) if folder.is_dir() else f"{folder} (missing: moved or deleted?)"
         console.line()
         console.line(f"  rec2notes folder  {shown}")
+        console.line(f"  Claude model      {_setting('claude_model', _model_name)}")
+        console.line(f"  Effort            {_setting('effort')}")
+        console.line(f"  Whisper model     {_setting('whisper_model')}")
         console.line()
-        console.line(f"  {console.style('c', ui.CYAN)}  Change: point to where you moved it    "
-                     f"{console.style('b', ui.CYAN)}  Back")
+        console.line(f"  {console.style('c', ui.CYAN)}  Change the folder: point to where you moved it")
+        console.line(f"  {console.style('m', ui.CYAN)}  Claude model    {console.style('e', ui.CYAN)}  Effort    "
+                     f"{console.style('w', ui.CYAN)}  Whisper model    {console.style('b', ui.CYAN)}  Back")
         choice = _ask(ask, "> ").lower()
         if choice == "b":
             return
         if choice == "c":
             _repoint(console, ask)
+        elif choice == "m":
+            paths.save_setting("claude_model", _ask_claude_model(console, ask, paths.setting_choice("claude_model")))
+        elif choice == "e":
+            paths.save_setting("effort", _ask_effort(console, ask, paths.setting_choice("effort")))
+        elif choice == "w" and (model := _ask_whisper_model(console, ask, paths.whisper_model_choice())):
+            paths.save_setting("whisper_model", model)
         else:
-            console.line("Type c or b.")
+            console.line("Type c, m, e, w or b.")
+
+
+def _setting(key: str, show: Callable[[str | None], str] = str) -> str:
+    """A default as runs use it, saying when an environment variable sets it and the saved one is ignored."""
+    env = paths.SETTING_ENV[key]
+    return show(paths.setting_choice(key)) + (f"  (from ${env}, which wins over this screen)" if os.environ.get(env) else "")
+
+
+def _model_name(model: str | None) -> str:
+    return model or "Claude Code's default"
+
+
+def _ask_claude_model(console, ask, current: str | None) -> str | None:
+    default = CLAUDE_MODELS.index(current) if current in CLAUDE_MODELS else None
+    return CLAUDE_MODELS[_pick(console, ask, "Claude model:", [_model_name(m) for m in CLAUDE_MODELS], default)]
+
+
+def _ask_effort(console, ask, current: str) -> str:
+    default = merge.EFFORTS.index(current) if current in merge.EFFORTS else None
+    return merge.EFFORTS[_pick(console, ask, "Effort, how hard Claude thinks (higher is slower):", list(merge.EFFORTS),
+                               default)]
+
+
+def _ask_whisper_model(console, ask, current: str) -> str | None:
+    """One of the downloaded Whisper models, or None if there is none."""
+    models = paths.downloaded_whisper_models()
+    if not models:
+        console.line(f"No Whisper model is downloaded: run `{paths.SETUP}`.")
+        return None
+    labels = [f"{m}  ({setup.MODELS[m]})" if m in setup.MODELS else m for m in models]
+    return models[_pick(console, ask, "Whisper model (more with `rec2notes setup`):", labels,
+                        models.index(current) if current in models else None)]
 
 
 def _repoint(console, ask) -> None:

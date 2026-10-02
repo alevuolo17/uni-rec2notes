@@ -84,8 +84,9 @@ class Banner(unittest.TestCase):
 
     def run_cli(self, *args):
         out = Terminal()
+        # stdin is not a terminal, or a bare `rec2notes` opens the menu and waits on the real one
         with mock.patch("shutil.get_terminal_size", return_value=os.terminal_size((120, 24))), \
-             mock.patch("sys.stdout", out):
+             mock.patch("sys.stdin", io.StringIO()), mock.patch("sys.stdout", out):
             try:
                 code = cli.main(list(args))
             except SystemExit as exit:  # argparse exits after -h

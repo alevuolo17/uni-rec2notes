@@ -11,7 +11,6 @@ from pathlib import Path
 
 from . import Abort, check, courses, doctor, menu, merge, paths, setup, stopping, transcribe, ui, uninstall
 
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
 COMPLETED_MARKERS = ("[^conflitto-", check.MISSED_TOPICS_HEADING, "[^non-annotati]")  # the last: the old missed-topics footnote
 CREATE_LENGTH = 20  # the created note's length, in % of the transcript's words; to settle from real runs
 LONG_TRANSCRIPT_WORDS = 30_000  # about three hours of speech; past this a merge is slow and eats a lot of usage
@@ -51,14 +50,16 @@ def build_parser() -> Parser:
 
 def add_whisper_option(p: argparse.ArgumentParser) -> None:
     p.add_argument("--whisper-model", metavar="NAME",
-                   help="Whisper model, e.g. large-v3-turbo (default: $REC2NOTES_WHISPER_MODEL, else the one setup downloaded)")
+                   help="Whisper model, e.g. large-v3-turbo (default: $REC2NOTES_WHISPER_MODEL, else the one saved by setup or in `rec2notes` → Settings)")
 
 
 def add_agent_options(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--effort", metavar="LEVEL", default=os.environ.get("REC2NOTES_EFFORT") or "high",
-                   help=f"claude effort: {', '.join(EFFORTS)} (default: $REC2NOTES_EFFORT, else high)")
-    p.add_argument("--claude-model", metavar="MODEL", default=os.environ.get("REC2NOTES_CLAUDE_MODEL"),
-                   help="claude model (default: $REC2NOTES_CLAUDE_MODEL, else Claude Code's default)")
+    p.add_argument("--effort", metavar="LEVEL",
+                   help=f"claude effort: {', '.join(merge.EFFORTS)} (default: $REC2NOTES_EFFORT, else the one saved in "
+                        "`rec2notes` → Settings, else high)")
+    p.add_argument("--claude-model", metavar="MODEL",
+                   help="claude model (default: $REC2NOTES_CLAUDE_MODEL, else the one saved in `rec2notes` → Settings, "
+                        "else Claude Code's default)")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -97,8 +98,10 @@ def parse_create_args(argv: list[str]) -> argparse.Namespace:
 
 def _checked(p: argparse.ArgumentParser, argv: list[str] | None) -> argparse.Namespace:
     args = p.parse_args(argv)
-    if args.effort not in EFFORTS:
-        p.error(f"--effort must be one of {', '.join(EFFORTS)}, not {args.effort!r}")
+    args.effort = args.effort or paths.setting_choice("effort")
+    args.claude_model = args.claude_model or paths.setting_choice("claude_model")
+    if args.effort not in merge.EFFORTS:
+        p.error(f"the effort must be one of {', '.join(merge.EFFORTS)}, not {args.effort!r}")
     if "whisper_model" in args and not args.whisper_model:
         args.whisper_model = paths.whisper_model_choice()
     return args
@@ -234,7 +237,7 @@ def run(args: argparse.Namespace, console: ui.Console) -> int:
     if args.dry_run:
         return dry_run(args, course, note_text, caches)
 
-    preflight(args.whisper_model, need_whisper=not all(c.exists() for c in caches))
+    preflight(args.whisper_model, caches)
     run_dir = make_run_dir(note.stem)
     console.header(course.name, note.name)
     if args.clean:
@@ -319,7 +322,7 @@ def run_create(args: argparse.Namespace, console: ui.Console) -> int:
         print(f"(dry run) would pipe this to: {shlex.join(command)}", file=sys.stderr)
         return 0
 
-    preflight(args.whisper_model, need_whisper=not all(c.exists() for c in caches))
+    preflight(args.whisper_model, caches)
     run_dir = make_run_dir(output.stem)
     console.header(course.name, output.name)
     transcript = transcribe_all(args, course, caches, run_dir, console)
@@ -376,7 +379,7 @@ def run_clean(args: argparse.Namespace, console: ui.Console) -> int:
     note_text = note.read_text(encoding="utf-8")
     output = clean_path(note)
     check_free(output, args.force)
-    preflight(paths.default_whisper_model(), need_whisper=False)
+    preflight(paths.default_whisper_model(), [])  # no recording: nothing to transcribe
     run_dir = make_run_dir(note.stem)
     clean_note(note_text, output, run_dir, args, console)
     console.line()
@@ -435,20 +438,9 @@ def cached_transcript(args: argparse.Namespace, caches: list[Path]) -> str:
     return transcribe.label_parts(parts)
 
 
-def preflight(model: str, need_whisper: bool) -> None:
+def preflight(model: str, caches: list[Path]) -> None:
     """Fail before a long transcription, not after it."""
-    problems = []
-    if not shutil.which("claude"):
-        problems.append("claude (Claude Code) is not on PATH")
-    if need_whisper:
-        if not shutil.which("ffmpeg"):
-            problems.append("ffmpeg is not installed")
-        if not transcribe.whisper_cli():
-            problems.append(f"whisper-cli is not built; run {paths.SETUP}")
-        for model_file in (paths.whisper_model(model), paths.vad_model()):
-            if not model_file.exists():
-                problems.append(f"{model_file} is missing; run {paths.SETUP} --whisper-model {model}")
-    if problems:
+    if problems := doctor.start_problems(model, caches):
         raise Abort("cannot start:\n  - " + "\n  - ".join(problems))
 
 

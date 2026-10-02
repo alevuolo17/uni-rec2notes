@@ -38,6 +38,23 @@ def run(console: ui.Console) -> int:
     return 1 if failed else 0
 
 
+def start_problems(model: str, caches: list[Path]) -> list[str]:
+    """What stops a run from starting, checked before a long transcription: Whisper's needs only matter while a
+    recording has no cached transcript (`caches`, one per recording, for `model`)."""
+    problems = []
+    if not shutil.which("claude"):
+        problems.append("claude (Claude Code) is not on PATH")
+    if not all(c.exists() for c in caches):
+        if not shutil.which("ffmpeg"):
+            problems.append("ffmpeg is not installed")
+        if not transcribe.whisper_cli():
+            problems.append(f"whisper-cli is not built; run {paths.SETUP}")
+        for model_file in (paths.whisper_model(model), paths.vad_model()):
+            if not model_file.exists():
+                problems.append(f"{model_file} is missing; run {paths.SETUP} --whisper-model {model}")
+    return problems
+
+
 def claude_installed() -> tuple:
     found = shutil.which("claude")
     if found:

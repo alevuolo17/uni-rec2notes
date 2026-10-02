@@ -62,8 +62,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="vulkan: any GPU with a Vulkan driver; cuda: NVIDIA with the CUDA toolkit; cpu: no GPU. "
                         "auto (default): vulkan if glslc is installed, else cpu. On Windows: cpu (default) or vulkan")
     p.add_argument("--whisper-model", metavar="NAME",
-                   help=f"Whisper model to download and use, any of whisper.cpp's (default: $REC2NOTES_WHISPER_MODEL, else the one "
-                        f"setup downloaded last, else {CPU_MODEL} on the cpu backend, else {paths.default_whisper_model()})")
+                   help=f"Whisper model to download and use, any of whisper.cpp's (default: $REC2NOTES_WHISPER_MODEL, else the "
+                        f"saved one, else {CPU_MODEL} on the cpu backend, else {paths.default_whisper_model()})")
     args = p.parse_args(argv)
     backend = args.backend or "auto"
     try:
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
                 clone()
                 download_models(model)
                 build(backend)
-            paths.save_whisper_model(model)
+            paths.save_setting("whisper_model", model)
             ensure_folders_file()
         print(f"\nSetup complete. rec2notes folder: {paths.folder()}")
         if (env := os.environ.get("REC2NOTES_WHISPER_MODEL")) and env != model:
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def default_model(backend: str) -> str:
     """The model setup fetches unless told otherwise: the one runs use, else turbo when the backend is the CPU."""
-    if chosen := os.environ.get("REC2NOTES_WHISPER_MODEL") or paths.saved_whisper_model():
+    if chosen := os.environ.get("REC2NOTES_WHISPER_MODEL") or paths.saved_settings().get("whisper_model"):
         return chosen
     if choose_backend(backend)[0] == "cpu":
         return CPU_MODEL

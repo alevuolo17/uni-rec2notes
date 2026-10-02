@@ -335,13 +335,13 @@ class QuestionsMixin:
         self.steps["clone"].assert_not_called()
 
     def test_a_rerun_offers_the_saved_model(self):
-        paths.save_whisper_model("large-v3-turbo-q5_0")
+        paths.save_setting("whisper_model", "large-v3-turbo-q5_0")
         code, _, asked = self.setup(answers=["", "", "", ""])
         self.assertEqual((code, asked[3]), (0, "Choose 1-3 [3]: "))
         self.steps["download_models"].assert_called_once_with("large-v3-turbo-q5_0")
 
     def test_a_saved_model_off_the_menu_is_offered_first(self):
-        paths.save_whisper_model("small")
+        paths.save_setting("whisper_model", "small")
         code, out, _ = self.setup(answers=["", "", "", ""])
         self.assertEqual(code, 0)
         self.assertIn("1) small", out)
@@ -352,7 +352,7 @@ class QuestionsMixin:
         with mock.patch.dict(os.environ, {"REC2NOTES_WHISPER_MODEL": "large-v3-turbo-q5_0"}):
             code, out, _ = self.setup(answers=["", "", "", "1"])
         self.assertEqual(code, 0)
-        self.assertEqual(paths.saved_whisper_model(), "large-v3")
+        self.assertEqual(paths.saved_settings().get("whisper_model"), "large-v3")
         self.assertIn("$REC2NOTES_WHISPER_MODEL is set to large-v3-turbo-q5_0, which wins over large-v3: "
                       "remove it to use large-v3.", out)
 

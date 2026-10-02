@@ -82,31 +82,48 @@ def settings_file() -> Path:
     return folder() / "settings.toml"
 
 
-def saved_whisper_model() -> str | None:
-    """The Whisper model setup last downloaded into the rec2notes folder, or None before setup has saved one."""
+def saved_settings() -> dict[str, str]:
+    """The defaults saved in the rec2notes folder's settings.toml: the Whisper model setup downloaded, and what
+    `rec2notes` → Settings chose. Empty before anything is saved."""
     pointed = pointed_folder()
     if pointed is None:
-        return None
+        return {}
     file = pointed / "settings.toml"
     try:
         with open(file, "rb") as f:
-            value = tomllib.load(f).get("whisper_model")
+            settings = tomllib.load(f)
     except (FileNotFoundError, NotADirectoryError):
-        return None
+        return {}
     except tomllib.TOMLDecodeError as e:
         raise Abort(f"{file}: {e}") from None
-    if value is not None and not isinstance(value, str):
-        raise Abort(f"{file}: `whisper_model` must be a model name, such as \"large-v3-turbo\"")
-    return value or None
+    for key, value in settings.items():
+        if not isinstance(value, str):
+            raise Abort(f"{file}: `{key}` must be text in quotes, such as {key} = \"high\"")
+    return {key: value for key, value in settings.items() if value}
 
 
-def save_whisper_model(name: str) -> None:
-    settings_file().write_text(f"whisper_model = {json.dumps(name)}\n", encoding="utf-8")
+def save_setting(key: str, value: str | None) -> None:
+    """Save a default in settings.toml, keeping the others; None removes it."""
+    settings = saved_settings() | {key: value}
+    settings_file().write_text("".join(f"{k} = {json.dumps(v)}\n" for k, v in settings.items() if v), encoding="utf-8")
+
+
+SETTING_ENV = {  # each setting's environment variable, which wins over the saved default
+    "claude_model": "REC2NOTES_CLAUDE_MODEL",
+    "effort": "REC2NOTES_EFFORT",
+    "whisper_model": "REC2NOTES_WHISPER_MODEL",
+}
+
+
+def setting_choice(key: str) -> str | None:
+    """What runs use: the setting's environment variable, else the saved default, else the built-in one (None for
+    the Claude model: Claude Code's default)."""
+    built_in = {"claude_model": None, "effort": "high", "whisper_model": default_whisper_model()}[key]
+    return os.environ.get(SETTING_ENV[key]) or saved_settings().get(key) or built_in
 
 
 def whisper_model_choice() -> str:
-    """The Whisper model runs use: $REC2NOTES_WHISPER_MODEL, else the one setup downloaded, else the platform's."""
-    return os.environ.get("REC2NOTES_WHISPER_MODEL") or saved_whisper_model() or default_whisper_model()
+    return setting_choice("whisper_model")
 
 
 def courses_file() -> Path:
@@ -132,6 +149,12 @@ def whisper_model(name: str) -> Path:
 
 def vad_model() -> Path:
     return whisper_model(VAD_MODEL)
+
+
+def downloaded_whisper_models() -> list[str]:
+    """The Whisper models in the rec2notes folder, without the VAD model."""
+    found = (p.name.removeprefix("ggml-").removesuffix(".bin") for p in (whisper_dir() / "models").glob("ggml-*.bin"))
+    return sorted(name for name in found if name != VAD_MODEL)
 
 
 def cache_dir() -> Path:

@@ -112,11 +112,13 @@ Type `rec2notes` in a terminal. A menu opens; type a number or letter and press 
   1  Run: complete a note, or create one, from a recording
   2  Doctor: check that everything is set up
   3  Courses: list them, add your own
-  4  Settings: where your rec2notes folder is
+  4  Settings: your rec2notes folder, default model, effort and Whisper
   q  Quit
 ```
 
 Wherever it asks for a file, you can type the path, paste it, or drag the file into the terminal.
+
+**4 Settings** saves the defaults every run starts from: the Claude model (Claude Code's default, opus, sonnet or haiku), the effort (low to max: higher is slower and more thorough) and the Whisper model, among the ones you downloaded.
 
 ### First time: add your course
 
@@ -126,7 +128,7 @@ Wherever it asks for a file, you can type the path, paste it, or drag the file i
 Lezione di reti. Termini tecnici in inglese: TCP, UDP, handshake, routing, subnet, NAT, DNS, socket, …
 ```
 
-Last, the folder that holds the course's notes. Every note in it, or in its subfolders, belongs to the course, so rec2notes won't ask again. **e** changes a course later.
+Last, the folder that holds the course's notes. When a note is in it, or in its subfolders, a run picks the course for you: Enter accepts it. **e** changes a course later.
 
 ### Complete a note
 
@@ -135,14 +137,14 @@ Last, the folder that holds the course's notes. Every note in it, or in its subf
 1. **Note**: the note you took in class.
 2. **Clean the note first?** Enter for no. Answer `y` if it's still raw: rec2notes tidies it into `<note> (pulito).md` and completes that copy.
 3. **Recording**: the lecture's audio. If it was recorded in parts, give the next part when asked, in order; Enter when there are no more.
-4. If the note isn't in one of your courses' folders, pick the course, and rec2notes offers to remember the folder.
-5. **A summary**: course, note, recording, and the Claude and Whisper models. Enter starts.
+4. **Which course is this?** If the note is in one of your courses' folders, that course is marked and Enter picks it.
+5. **A summary**: course, note, recording, and the Claude model, effort and Whisper model. Enter starts; `c` changes the three for this run. Anything that would stop the run, such as a Whisper model that isn't downloaded, is listed here, before it starts.
 
 You get `<note> (completo).md` next to your note. Look for the `[^conflitto-N]` footnotes, where your note and the lecture disagree, and the *Argomenti non presenti negli appunti* section at the end. If any of your words went missing, the terminal lists them; a filled-in `[?]` is expected there.
 
 ### Create a note from a recording
 
-For a lecture you have no notes of: **1 → 2**. Give the full path of the new note (its folder must exist), the recording, and the course if asked. The note comes out at about a fifth of the transcript's length, organised by topic. Unclear audio is marked `[? hh:mm:ss]` and things shown only on a slide `(integra con slide)`.
+For a lecture you have no notes of: **1 → 2**. Give the full path of the new note (its folder must exist), the recording, and the course. The note comes out at about a fifth of the transcript's length, organised by topic. Unclear audio is marked `[? hh:mm:ss]` and things shown only on a slide `(integra con slide)`.
 
 <details>
 <summary>All commands</summary>
@@ -160,7 +162,7 @@ Everything the menu does is also a command, for scripts or if you prefer typing:
 | `rec2notes setup` | Install or change Whisper (backend, model). Safe to rerun. |
 | `rec2notes uninstall` | Delete rec2notes' folder; then `pipx uninstall uni-rec2notes`. |
 
-Every run also takes `--course`, `--whisper-model`, `--claude-model` and `--effort`; `rec2notes -h` lists them.
+Every run also takes `--course`, `--whisper-model`, `--claude-model` and `--effort`; `rec2notes -h` lists them. A flag wins over `$REC2NOTES_WHISPER_MODEL`, `$REC2NOTES_CLAUDE_MODEL` and `$REC2NOTES_EFFORT`, which win over the defaults saved in Settings.
 </details>
 
 ## Update and uninstall

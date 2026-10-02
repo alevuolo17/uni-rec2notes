@@ -15,7 +15,7 @@ from . import Abort, paths
 ENTRIES = {  # what rec2notes creates in its folder
     "courses.toml": "your courses",
     "folders.toml": "each course's vault folder on this computer",
-    "settings.toml": "the Whisper model setup downloaded",
+    "settings.toml": "your default Claude model, effort and Whisper model",
     "whisper.cpp": "whisper.cpp and the Whisper models",
     "cache": "cached transcripts and past runs",
 }

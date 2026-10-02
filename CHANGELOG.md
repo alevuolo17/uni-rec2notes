@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 (2026-10-02)
+
+- tests: the banner test's stdin is not a terminal, so a bare rec2notes never opens the menu
+- menu: a wrong answer at Start asks again without repeating the summary
+- readme: the course question, c at Start and the defaults in Settings
+- menu: say that a new note's path takes ~, not $HOME
+- menu: say what stops a run before Start, not after
+- menu: c at Start changes the Claude model, effort and Whisper model for this run
+- menu: Settings saves the default Claude model, effort and Whisper model
+- paths: settings.toml also holds the default Claude model and effort
+- menu: always ask the course; the note's folder only pre-selects it
+
 ## 0.1.2 (2026-10-01)
 
 - transcribe: say to install the VC++ runtime when whisper-cli can't start

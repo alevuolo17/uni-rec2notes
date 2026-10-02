@@ -27,6 +27,9 @@ def _transcript(transcript: str) -> str:
     return f"<transcript>\n{_with_final_newline(transcript)}</transcript>\n"
 
 
+EFFORTS = ("low", "medium", "high", "xhigh", "max")  # what claude --effort takes
+
+
 def claude_command(effort: str, model: str | None, prompt: Path = paths.MERGE_PROMPT) -> list[str]:
     cmd = ["claude", "-p", "--effort", effort, "--tools", "", "--no-session-persistence",
            "--system-prompt-file", str(prompt)]

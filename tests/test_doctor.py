@@ -44,7 +44,7 @@ class Doctor(Sandbox):
         self.assertIn(f"{paths.SETUP} --whisper-model {MODEL}", out)
 
     def test_the_saved_model_is_the_one_checked(self):
-        paths.save_whisper_model("tiny")
+        paths.save_setting("whisper_model", "tiny")
         code, out, _ = self.rec2notes("doctor")
         self.assertEqual(code, 1)
         self.assertIn("tiny is missing", out)

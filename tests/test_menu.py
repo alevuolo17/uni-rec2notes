@@ -1,10 +1,11 @@
 import io
+import os
 import shutil
 from unittest import mock
 
-from rec2notes import cli, courses, menu, paths, ui
+from rec2notes import cli, courses, menu, paths, transcribe, ui
 
-from .helpers import Sandbox
+from .helpers import MODEL, Sandbox
 
 
 class Hub(Sandbox):
@@ -51,7 +52,7 @@ class Hub(Sandbox):
 
     def test_create_asks_the_new_note_and_recording_then_confirms(self):
         new = self.note.with_name("Lezione 2.md")
-        args, out, _ = self.hub("1", "2", str(new), str(self.audio), "", "")
+        args, out, _ = self.hub("1", "2", str(new), str(self.audio), "", "", "")
         self.assertTrue(args.create)
         self.assertEqual((args.note, args.audio, args.course, args.length), (new, [self.audio], "net", 20))
         self.assertIn("New note       Lezione 2.md", out)
@@ -63,19 +64,26 @@ class Hub(Sandbox):
 
     def test_create_refuses_a_taken_name_or_a_missing_folder_and_adds_md(self):
         args, out, _ = self.hub("1", "2", str(self.tmp / "nope" / "x.md"), str(self.note), str(self.note.with_name("Lezione 2")),
-                                str(self.audio), "", "")
-        self.assertIn(f"No such folder: {self.tmp / 'nope'}", out)
+                                str(self.audio), "", "", "")
+        self.assertIn(f"No such folder: {self.tmp / 'nope'}.\n", out)
         self.assertIn(f"{self.note} already exists: pick another name.", out)
         self.assertEqual(args.note, self.note.with_name("Lezione 2.md"))
+
+    def test_create_says_variables_are_not_expanded(self):
+        self.home.mkdir()
+        args, out, _ = self.hub("1", "2", "$HOME/Lezione 2.md", "%USERPROFILE%/Lezione 2.md", "~/Lezione 2.md",
+                                str(self.audio), "", "1", "")
+        self.assertEqual(out.count("Variables like $HOME aren't expanded here: use ~ for your home folder."), 2)
+        self.assertEqual(args.note, self.home / "Lezione 2.md")
 
     def test_create_in_an_unknown_folder_asks_for_the_course(self):
         elsewhere = self.tmp / "vault" / "Altro"
         elsewhere.mkdir()
-        args, _, _ = self.hub("1", "2", str(elsewhere / "Lezione.md"), str(self.audio), "", "2", "n", "")
+        args, _, _ = self.hub("1", "2", str(elsewhere / "Lezione.md"), str(self.audio), "", "2", "")
         self.assertEqual(args.course, "analisi")
 
     def test_run_asks_note_audio_then_confirms_with_the_settings(self):
-        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "")
+        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
         self.assertEqual((args.note, args.audio, args.course), (self.note, [self.audio], "net"))
         self.assertIn("Reti di calcolatori", out)
         self.assertIn("Agent          claude", out)
@@ -83,42 +91,45 @@ class Hub(Sandbox):
         self.assertIn("Model          Claude Code's default", out)
 
     def test_paths_are_cleaned_and_bad_ones_asked_again(self):
-        args, out, _ = self.hub("1", "1", str(self.tmp / "nope.md"), f"'{self.note}'", "", f"{self.audio}".replace(" ", "\\ "), "", "y")
+        args, out, _ = self.hub("1", "1", str(self.tmp / "nope.md"), f"'{self.note}'", "", f"{self.audio}".replace(" ", "\\ "), "", "", "y")
         self.assertEqual(args.note, self.note)
         self.assertIn(f"Not a file: {self.tmp / 'nope.md'}", out)
 
     def test_several_parts(self):
         second = self.make_audio("parte2.m4a", b"audio two")
-        args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), str(self.tmp / "nope.m4a"), str(second), "", "")
+        args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), str(self.tmp / "nope.m4a"), str(second), "", "", "")
         self.assertEqual(args.audio, [self.audio, second])
 
     def test_declining_returns_nothing(self):
-        self.assertIsNone(self.hub("1", "1", str(self.note), "", str(self.audio), "", "n")[0])
+        self.assertIsNone(self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "n")[0])
 
     def test_unknown_folder_asks_for_the_course(self):
         elsewhere = self.tmp / "vault" / "Altro" / "Lezione 2.md"
         elsewhere.parent.mkdir()
         elsewhere.write_text("# Lezione\n", encoding="utf-8")
-        args, out, _ = self.hub("1", "1", str(elsewhere), "", str(self.audio), "", "9", "2", "n", "")
+        args, out, _ = self.hub("1", "1", str(elsewhere), "", str(self.audio), "", "9", "2", "")
         self.assertIn("Type a number from 1 to 3, or n.", out)
         self.assertEqual(args.course, "analisi")
-        self.assertNotIn("analisi", paths.folders_file().read_text(encoding="utf-8"))  # answering n remembers nothing
+        self.assertEqual(paths.folders_file().read_text(encoding="utf-8"), 'net = "Reti"\n')  # a run never writes it
 
-    def test_the_picked_course_can_be_remembered(self):
-        elsewhere = self.tmp / "vault" / "Altro" / "Lezione 2.md"
-        elsewhere.parent.mkdir()
-        elsewhere.write_text("# Lezione\n", encoding="utf-8")
-        self.hub("1", "1", str(elsewhere), "", str(self.audio), "", "2", "", "n")
-        args, _, prompts = self.hub("1", "1", str(elsewhere), "", str(self.audio), "", "")
-        self.assertEqual(args.course, "analisi")  # found from the remembered folder, so no course question
+    def test_the_course_of_the_notes_folder_is_asked_with_enter_picking_it(self):
+        args, out, prompts = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
+        self.assertIn("Reti di calcolatori  (from the note's folder)", out)
+        self.assertIn("[1] > ", prompts)
+        self.assertEqual(args.course, "net")
         self.assertFalse(any("Remember" in p for p in prompts))
+
+    def test_another_course_can_be_picked_for_a_note_in_a_course_folder(self):
+        args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "2", "")
+        self.assertEqual(args.course, "analisi")
+        self.assertEqual(paths.folders_file().read_text(encoding="utf-8"), 'net = "Reti"\n')
 
     def test_a_new_course_can_be_added_during_a_run(self):
         elsewhere = self.tmp / "vault" / "Altro" / "Lezione 2.md"
         elsewhere.parent.mkdir()
         elsewhere.write_text("# Lezione\n", encoding="utf-8")
         args, out, _ = self.hub("1", "1", str(elsewhere), "", str(self.audio), "", "n",
-                                "Bad Slug", "net", "fisica", "Fisica 1", "Lezione di fisica. Termini: spin.", "", "")
+                                "Bad Slug", "net", "fisica", "Fisica 1", "Lezione di fisica. Termini: spin.", "")
         self.assertIn("must be lowercase", out)
         self.assertIn("already exists", out)  # a bad slug is refused before the name, vocabulary and folder are asked
         self.assertEqual(args.course, "fisica")
@@ -194,19 +205,9 @@ class Hub(Sandbox):
         self.assertIn("overlaps the folder of net", out)
         self.assertIn(f"Fisica 1  [{str(other).lstrip('/')}]", out)
 
-    def test_remembering_is_skipped_when_the_notes_folder_contains_another_courses_folder(self):
-        elsewhere = self.tmp / "vault" / "Altro" / "Lezione 2.md"
-        elsewhere.parent.mkdir()
-        elsewhere.write_text("# Lezione\n", encoding="utf-8")
-        self.write_folders(f"net = '{elsewhere.parent / 'Sotto'}'\n")
-        args, out, prompts = self.hub("1", "1", str(elsewhere), "", str(self.audio), "", "2", "")
-        self.assertEqual(args.course, "analisi")
-        self.assertIn("Not remembering the folder: ", out)
-        self.assertFalse(any("Remember" in p for p in prompts))
-
     def test_a_folder_is_optional(self):
         _, out, _ = self.add_course("")
-        self.assertIn("Added Fisica 1. No folder set:", out)
+        self.assertIn("Added Fisica 1. No folder set, so a run won't pre-select it", out)
         self.assertIn(str(paths.folders_file()), out)
         self.assertIn("Fisica 1  [no folder]", out)
 
@@ -215,41 +216,109 @@ class Hub(Sandbox):
         elsewhere.parent.mkdir()
         elsewhere.write_text("# Lezione\n", encoding="utf-8")
         junk = ["abc", "0", "-1", "4", "1.5", "²", "٣"]  # the last two are digits that int() can't read
-        args, out, _ = self.hub("1", "1", str(elsewhere), "", str(self.audio), "", *junk, "3", "n", "")
+        args, out, _ = self.hub("1", "1", str(elsewhere), "", str(self.audio), "", *junk, "3", "")
         self.assertEqual(out.count("Type a number from 1 to 3, or n."), len(junk))
         self.assertEqual(args.course, "basi")
 
     def test_confirmation_asks_again_on_anything_but_yes_or_no(self):
-        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "yy", "maybe", "N")
+        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "yy", "maybe", "N")
         self.assertIsNone(args)
-        self.assertEqual(out.count("Type y or n."), 2)
+        self.assertEqual(out.count("Type y, n or c."), 2)
+        self.assertEqual(out.count("Effort         high"), 1)  # asked again, without the summary again
+
+    def test_c_at_start_changes_the_settings_for_this_run_only(self):
+        self.add_model("large-v3-turbo-q5_0")  # second after MODEL
+        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "c", "4", "1", "2", "")
+        self.assertEqual((args.claude_model, args.effort, args.whisper_model), ("haiku", "low", "large-v3-turbo-q5_0"))
+        self.assertIn("Model          haiku", out)
+        self.assertIn("Effort         low", out)
+        self.assertFalse(paths.settings_file().exists())
+
+    def test_enter_keeps_each_setting_at_c(self):
+        args, _, _ = self.hub("1", "2", str(self.note.with_name("Lezione 2.md")), str(self.audio), "", "", "c", "", "", "", "")
+        self.assertEqual((args.claude_model, args.effort, args.whisper_model), (None, "high", MODEL))
+
+    def test_a_missing_whisper_model_is_shown_before_start_and_c_can_pick_a_downloaded_one(self):
+        paths.whisper_model(MODEL).unlink()
+        self.add_model("large-v3-turbo-q5_0")
+        args, out, prompts = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "", "c", "", "", "1", "")
+        self.assertIn(f"Can't start yet:\n  - {paths.whisper_model(MODEL)} is missing", out)
+        self.assertIn("Type c or n.", out)  # Enter doesn't start it
+        self.assertIn("c to change settings, n to cancel: ", prompts)
+        self.assertEqual(args.whisper_model, "large-v3-turbo-q5_0")
+
+    def test_a_cached_transcript_needs_no_whisper_model(self):
+        paths.whisper_model(MODEL).unlink()
+        cache = paths.transcript_cache(MODEL, transcribe.sha256_file(self.audio))
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text("[00:00:00] Lezione.\n", encoding="utf-8")
+        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
+        self.assertNotIn("Can't start yet", out)
+        self.assertEqual(args.whisper_model, MODEL)
 
     def test_the_menu_arguments_run_like_the_flags(self):
-        args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "")
+        args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
         code = cli.run(args, ui.Console(io.StringIO(), io.StringIO()))
         self.assertEqual(code, 0)
         self.assertTrue(self.output.exists())
 
     def test_cleaning_is_asked_and_off_by_default(self):
-        args, out, prompts = self.hub("1", "1", str(self.note), "", str(self.audio), "", "")
+        args, out, prompts = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
         self.assertFalse(args.clean)
         self.assertTrue(any(p.startswith("Clean the note first?") for p in prompts))
         self.assertNotIn("Clean  ", out)
 
     def test_yes_to_cleaning_sets_the_flag_and_shows_it_in_the_summary(self):
-        args, out, _ = self.hub("1", "1", str(self.note), "y", str(self.audio), "", "")
+        args, out, _ = self.hub("1", "1", str(self.note), "y", str(self.audio), "", "", "")
         self.assertTrue(args.clean)
         self.assertIn("Clean          yes, then merge the cleaned copy", out)
 
     def test_the_cleaning_answer_must_be_yes_or_no(self):
-        args, out, _ = self.hub("1", "1", str(self.note), "maybe", "y", str(self.audio), "", "")
+        args, out, _ = self.hub("1", "1", str(self.note), "maybe", "y", str(self.audio), "", "", "")
         self.assertTrue(args.clean)
         self.assertEqual(out.count("Type y or n."), 1)
 
     def test_settings_shows_the_folder(self):
         _, out, _ = self.hub("4", "x", "b", "q")
         self.assertIn(f"rec2notes folder  {self.folder}", out)
-        self.assertIn("Type c or b.", out)
+        self.assertIn("Type c, m, e, w or b.", out)
+        self.assertIn("Claude model      Claude Code's default", out)
+        self.assertIn("Effort            high", out)
+        self.assertIn(f"Whisper model     {MODEL}", out)
+
+    def test_settings_saves_the_defaults_runs_use(self):
+        self.add_model("large-v3-turbo-q5_0")
+        _, out, _ = self.hub("4", "m", "2", "e", "5", "w", "2", "b", "q")
+        self.assertEqual(paths.saved_settings(),
+                         {"claude_model": "opus", "effort": "max", "whisper_model": "large-v3-turbo-q5_0"})
+        self.assertIn("Effort            max", out)
+        args = cli.parse_args([str(self.note), str(self.audio)])
+        self.assertEqual((args.claude_model, args.effort, args.whisper_model), ("opus", "max", "large-v3-turbo-q5_0"))
+
+    def test_settings_pickers_keep_the_current_value_on_enter(self):
+        paths.save_setting("claude_model", "sonnet")
+        _, _, prompts = self.hub("4", "m", "", "e", "", "b", "q")
+        self.assertEqual(prompts.count("[3] > "), 2)  # sonnet, then high
+        self.assertEqual(paths.saved_settings()["claude_model"], "sonnet")
+        self.assertEqual(paths.saved_settings()["effort"], "high")
+
+    def test_settings_offers_only_the_downloaded_whisper_models(self):
+        self.add_model("large-v3-turbo")
+        _, out, _ = self.hub("4", "w", "", "b", "q")
+        self.assertIn("large-v3-turbo  (much faster", out)
+        self.assertNotIn("large-v3-turbo-q5_0", out)
+        self.assertNotIn(paths.VAD_MODEL, out)
+
+    def test_settings_without_whisper_models_says_to_run_setup(self):
+        shutil.rmtree(paths.whisper_dir() / "models")
+        _, out, _ = self.hub("4", "w", "b", "q")
+        self.assertIn("No Whisper model is downloaded: run `rec2notes setup`.", out)
+        self.assertNotIn("whisper_model", paths.saved_settings())
+
+    def test_settings_says_when_an_environment_variable_wins(self):
+        os.environ["REC2NOTES_EFFORT"] = "low"
+        _, out, _ = self.hub("4", "b", "q")
+        self.assertIn("Effort            low  (from $REC2NOTES_EFFORT, which wins over this screen)", out)
 
     def test_settings_points_to_a_moved_folder(self):
         moved = self.tmp / "moved" / "rec2notes"

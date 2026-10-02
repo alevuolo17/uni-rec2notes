@@ -35,7 +35,7 @@ class Output(Sandbox):
         self.assertNotIn(b"\r\n", self.output.read_bytes())  # Windows' text mode would write CRLF
 
     def test_runs_use_the_model_setup_saved(self):
-        paths.save_whisper_model("tiny")
+        paths.save_setting("whisper_model", "tiny")
         self.add_model("tiny")
         code, out, err = self.rec2notes(self.note, self.audio)
         self.assertEqual(code, 0, err)
@@ -74,6 +74,26 @@ class Output(Sandbox):
         (args,) = self.calls("claude")
         self.assertEqual(args[args.index("--effort") + 1], "max")
         self.assertEqual(args[args.index("--model") + 1], "opus")
+
+    def test_the_saved_claude_model_and_effort_are_used_unless_overridden(self):
+        paths.save_setting("effort", "low")
+        paths.save_setting("claude_model", "haiku")
+        args = cli.parse_args([str(self.note), str(self.audio)])
+        self.assertEqual((args.effort, args.claude_model), ("low", "haiku"))
+        os.environ["REC2NOTES_EFFORT"] = "medium"
+        self.assertEqual(cli.parse_args([str(self.note), str(self.audio)]).effort, "medium")
+        self.assertEqual(cli.parse_args([str(self.note), str(self.audio), "--effort", "max"]).effort, "max")
+
+    def test_without_saved_settings_the_effort_is_high_and_the_model_claude_codes(self):
+        args = cli.parse_args([str(self.note), str(self.audio)])
+        self.assertEqual((args.effort, args.claude_model), ("high", None))
+
+    def test_a_bad_saved_effort_is_refused(self):
+        paths.save_setting("effort", "huge")
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            cli.parse_args([str(self.note), str(self.audio)])
+        self.assertIn("the effort must be one of low, medium, high, xhigh, max, not 'huge'", err.getvalue())
 
     def test_unquoted_path_with_spaces_gets_a_hint(self):
         head, tail = str(self.note).split(" ", 1)  # ".../Reti/Lezione", "1.md"
