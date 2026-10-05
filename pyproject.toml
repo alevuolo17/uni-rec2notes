@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uni-rec2notes"
-version = "0.2.0"
+version = "0.2.1"
 description = "Complete a formatted lecture note from the lecture recording."
 requires-python = ">=3.11"
 

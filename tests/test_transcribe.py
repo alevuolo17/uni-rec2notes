@@ -99,6 +99,14 @@ class Transcription(Sandbox):
         self.assertIn("a DLL it needs is missing. Install the Visual C++ runtime with "
                       "`winget install Microsoft.VCRedist.2015+.x64`", err)
 
+    def test_the_length_is_read_without_converting(self):
+        lecture = self.make_audio("lunga.m4a", b"x" * 5401)
+        self.assertEqual(transcribe.audio_seconds(lecture), 5401.0)
+        self.assertEqual(lecture.read_bytes(), b"x" * 5401)
+
+    def test_a_length_ffmpeg_cannot_read_is_none(self):
+        self.assertIsNone(transcribe.audio_seconds(self.make_audio("vuota.m4a", b"")))
+
     def test_missing_model_fails_before_transcribing(self):
         code, _, err = self.rec2notes(self.note, self.audio, "--whisper-model", "medium")
         self.assertEqual(code, 1)

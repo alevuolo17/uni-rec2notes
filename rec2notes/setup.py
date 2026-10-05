@@ -59,13 +59,13 @@ def main(argv: list[str] | None = None) -> int:
                                                           "Safe to rerun. Without options, in a terminal, it asks for the folder, "
                                                           "the backend and the model.")
     p.add_argument("--backend", choices=BACKENDS,
-                   help="vulkan: any GPU with a Vulkan driver; cuda: NVIDIA with the CUDA toolkit; cpu: no GPU. "
-                        "auto (default): vulkan if glslc is installed, else cpu. On Windows: cpu (default) or vulkan")
+                   help="vulkan: any GPU with a Vulkan driver; cuda: NVIDIA with the CUDA toolkit; cpu: no GPU; "
+                        "auto: vulkan if glslc is installed, else cpu. On Windows: cpu or vulkan. "
+                        "Default: the installed one, else auto (cpu on Windows)")
     p.add_argument("--whisper-model", metavar="NAME",
                    help=f"Whisper model to download and use, any of whisper.cpp's (default: $REC2NOTES_WHISPER_MODEL, else the "
                         f"saved one, else {CPU_MODEL} on the cpu backend, else {paths.default_whisper_model()})")
     args = p.parse_args(argv)
-    backend = args.backend or "auto"
     try:
         asking = args.backend is None and args.whisper_model is None and interactive()
         if asking:
@@ -79,14 +79,20 @@ def main(argv: list[str] | None = None) -> int:
                 print("Nothing installed.")
                 return 0
             use_folder(ask_folder(paths.pointed_folder() or paths.default_folder()))
-            backend = pick(console, "Backend", backend_menu(), "cpu" if paths.WINDOWS else backend)
+        else:
+            use_folder(paths.pointed_folder() or paths.default_folder())
+        installed = installed_backend()
+        backend = args.backend or installed or ("cpu" if paths.WINDOWS else "auto")
+        if asking:
+            backend = pick(console, "Backend", backend_menu(installed), backend)
             model = pick(console, "Whisper model", model_menu(default_model(backend)), default_model(backend))
             print()
         else:
-            use_folder(paths.pointed_folder() or paths.default_folder())
             model = args.whisper_model or default_model(backend)
         with stopping.handling():
             backend, reason = choose_backend(backend)
+            if not asking and not args.backend and backend == installed:
+                reason = "The one installed; --backend changes it."
             print(f"Backend: {backend}. {reason}")
             if paths.WINDOWS:
                 install_prebuilt(backend)
@@ -176,16 +182,34 @@ def pick(console: ui.Console, title: str, options: list[tuple[str, str]], defaul
             return names[int(answer) - 1]
 
 
-def backend_menu() -> list[tuple[str, str]]:
+def backend_menu(installed: str | None) -> list[tuple[str, str]]:
     if paths.WINDOWS:
-        return [("cpu", "works on any PC, slower"),
-                ("vulkan", "a GPU with a Vulkan driver: AMD, NVIDIA, Intel; about 5x faster"
-                           + ("" if vulkan_driver() else " (no Vulkan driver found)"))]
-    glslc, nvcc = shutil.which("glslc"), shutil.which("nvcc")
-    return [("auto", f"vulkan if glslc is installed, else cpu: here, {'vulkan' if glslc else 'cpu'}"),
-            ("vulkan", "any GPU with a Vulkan driver: Intel, AMD, NVIDIA" + ("" if glslc else " (glslc is not installed)")),
-            ("cuda", "NVIDIA, with the CUDA toolkit" + ("" if nvcc else " (nvcc is not on PATH)")),
-            ("cpu", "no GPU, much slower")]
+        options = [("cpu", "works on any PC, slower"),
+                   ("vulkan", "a GPU with a Vulkan driver: AMD, NVIDIA, Intel; about 5x faster"
+                              + ("" if vulkan_driver() else " (no Vulkan driver found)"))]
+    else:
+        glslc, nvcc = shutil.which("glslc"), shutil.which("nvcc")
+        options = [("auto", f"vulkan if glslc is installed, else cpu: here, {'vulkan' if glslc else 'cpu'}"),
+                   ("vulkan", "any GPU with a Vulkan driver: Intel, AMD, NVIDIA" + ("" if glslc else " (glslc is not installed)")),
+                   ("cuda", "NVIDIA, with the CUDA toolkit" + ("" if nvcc else " (nvcc is not on PATH)")),
+                   ("cpu", "no GPU, much slower")]
+    return [(name, description + (", installed" if name == installed else "")) for name, description in options]
+
+
+def installed_backend() -> str | None:
+    """The backend of the whisper.cpp in the rec2notes folder, which a rerun keeps unless told otherwise: on Windows
+    from its files, so an older pinned zip still counts (upstream's cpu zip has no ggml-vulkan.dll), on Linux from
+    the GGML flags of the cached build."""
+    if paths.WINDOWS:
+        cli = paths.whisper_cli_built()
+        if not cli.is_file():
+            return None
+        return "vulkan" if (cli.parent / "ggml-vulkan.dll").is_file() else "cpu"
+    cache = paths.whisper_dir() / "build" / "CMakeCache.txt"
+    if not cache.is_file():
+        return None
+    lines = cache.read_text(encoding="utf-8", errors="replace").splitlines()
+    return next((backend for backend in ("vulkan", "cuda") if f"GGML_{backend.upper()}:BOOL=ON" in lines), "cpu")
 
 
 def model_menu(default: str) -> list[tuple[str, str]]:
@@ -226,7 +250,7 @@ def choose_backend(requested: str) -> tuple[str, str]:
             raise Abort("on Windows, setup installs whisper.cpp for the CPU or Vulkan; there is no cuda backend.")
         if not vulkan_driver():
             raise Abort("the vulkan backend needs a Vulkan driver (vulkan-1.dll), which was not found: "
-                        "update your GPU driver, or use cpu.")
+                        "update your GPU driver, or use --backend cpu.")
         return "vulkan", "rec2notes' prebuilt Vulkan build of whisper.cpp, for any GPU with a Vulkan driver."
     if requested == "auto":
         if shutil.which("glslc"):
@@ -234,7 +258,7 @@ def choose_backend(requested: str) -> tuple[str, str]:
         return "cpu", ("Chosen automatically: glslc is not installed, so whisper.cpp runs on the CPU only (much slower). "
                        f"For GPU acceleration, install {VULKAN_PACKAGES}, then rerun setup.")
     if requested == "vulkan" and not shutil.which("glslc"):
-        raise Abort(f"the vulkan backend needs glslc, which is not on PATH. Install {VULKAN_PACKAGES}.")
+        raise Abort(f"the vulkan backend needs glslc, which is not on PATH. Install {VULKAN_PACKAGES}, or use --backend cpu.")
     if requested == "cuda" and not shutil.which("nvcc"):
         raise Abort("the cuda backend needs nvcc from the CUDA toolkit, which is not on PATH (it is often in /usr/local/cuda/bin).")
     return requested, "Chosen explicitly."

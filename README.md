@@ -158,8 +158,8 @@ Everything the menu does is also a command, for scripts or if you prefer typing:
 | `rec2notes create NOTE AUDIO...` | Write a new note from the recording. `--length PCT`: how long, as a share of the transcript (default 20). |
 | `rec2notes clean NOTE` | Only tidy a raw note into `<note> (pulito).md`. |
 | `rec2notes course add\|edit\|list` | Manage your courses and their note folders. |
-| `rec2notes doctor` | Check the setup. |
-| `rec2notes setup` | Install or change Whisper (backend, model). Safe to rerun. |
+| `rec2notes doctor` | Check the setup; its first line is your version (also `rec2notes --version`). |
+| `rec2notes setup` | Install or change Whisper (backend, model). Safe to rerun: it keeps your backend unless you pick another. |
 | `rec2notes uninstall` | Delete rec2notes' folder; then `pipx uninstall uni-rec2notes`. |
 
 Every run also takes `--course`, `--whisper-model`, `--claude-model` and `--effort`; `rec2notes -h` lists them. A flag wins over `$REC2NOTES_WHISPER_MODEL`, `$REC2NOTES_CLAUDE_MODEL` and `$REC2NOTES_EFFORT`, which win over the defaults saved in Settings.
@@ -167,9 +167,13 @@ Every run also takes `--course`, `--whisper-model`, `--claude-model` and `--effo
 
 ## Update and uninstall
 
+To hear about new versions, use **Watch → Custom → Releases** on this repository.
+
 ```sh
-# Update: reinstall rec2notes from the latest version
-pipx install --force https://github.com/alevuolo17/uni-rec2notes/archive/refs/heads/main.zip
+# Show the version you have
+rec2notes --version
+# Update to the latest version, from the address you installed from
+pipx upgrade uni-rec2notes
 # Uninstall: delete rec2notes' folder, after asking; your notes are never touched
 rec2notes uninstall
 # Then remove the rec2notes command itself

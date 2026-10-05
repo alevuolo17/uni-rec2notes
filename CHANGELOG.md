@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 (2026-10-05)
+
+- menu: show the transcript's size before a run starts
+- menu: keep backslash-space in Windows paths, where the backslash separates folders
+- readme: drop the pipx --force warning, the PyPI names are placeholders now
+- readme: setup keeps your backend on a rerun
+- setup: a rerun keeps the installed backend unless --backend changes it
+- readme: update with pipx upgrade, check the version, watch releases
+- cli, doctor: rec2notes --version, and the version as doctor's first row
+
 ## 0.2.0 (2026-10-02)
 
 - tests: the banner test's stdin is not a terminal, so a bare rec2notes never opens the menu

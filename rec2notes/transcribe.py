@@ -14,6 +14,9 @@ from . import Abort, paths, stopping
 
 PROGRESS = re.compile(r"progress =\s*(\d+)%")  # whisper-cli -pp, every 5%
 DLL_NOT_FOUND = 0xC0000135  # Windows' exit status for a program that can't start: whisper-cli without the VC++ runtime
+DURATION = re.compile(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)")  # ffmpeg's line about its input
+WORDS_PER_MINUTE = 110  # a 90-minute lecture's transcript, timestamps included; to settle from more lectures
+LONG_TRANSCRIPT_WORDS = 30_000  # about four and a half hours of lecture; past this a merge is slow and eats a lot of usage
 
 
 def sha256_file(path: Path) -> str:
@@ -27,6 +30,20 @@ def whisper_cli() -> str | None:
     if os.access(built, os.X_OK):
         return str(built)
     return shutil.which("whisper-cli")
+
+
+def audio_seconds(audio: Path) -> float | None:
+    """The recording's length, read by ffmpeg from the file's header without converting it; None if it can't tell."""
+    try:
+        result = subprocess.run([paths.program("ffmpeg"), "-hide_banner", "-nostdin", "-i", str(audio)],
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if not (match := DURATION.search(result.stderr)):
+        return None
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
 def format_timestamp(ms: int) -> str:

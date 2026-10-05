@@ -1,4 +1,5 @@
 import contextlib
+import importlib.metadata
 import io
 import os
 import shlex
@@ -10,6 +11,7 @@ import time
 import unittest
 from unittest import mock
 
+import rec2notes
 from rec2notes import cli, courses, paths, setup, transcribe
 
 from .helpers import FIXTURES, MODEL, TESTS, Sandbox
@@ -57,6 +59,17 @@ class Output(Sandbox):
         result = subprocess.run([sys.executable, "-m", "rec2notes"], cwd=TESTS.parent, capture_output=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(result.stdout.startswith("usage: rec2notes"))
+
+    def test_version_prints_the_installed_version(self):
+        out = io.StringIO()
+        with mock.patch("importlib.metadata.version", return_value="9.9.9"), \
+                self.assertRaises(SystemExit) as exit, contextlib.redirect_stdout(out):
+            cli.main(["--version"])
+        self.assertEqual((exit.exception.code, out.getvalue()), (0, "rec2notes 9.9.9\n"))
+
+    def test_version_without_package_metadata_says_it_is_not_installed(self):
+        with mock.patch("importlib.metadata.version", side_effect=importlib.metadata.PackageNotFoundError):
+            self.assertEqual(rec2notes.version(), "unknown (not installed)")
 
     def test_setup_is_a_subcommand(self):
         with mock.patch.object(setup, "main", return_value=0) as main:
@@ -486,9 +499,7 @@ class TranscriptSize(Sandbox):
         self.assertLess(out.index("Transcript "), out.index("Merge "))
 
     def test_an_unusually_long_transcript_warns_and_goes_on_off_a_terminal(self):
-        from rec2notes import cli
-        cli.LONG_TRANSCRIPT_WORDS = 1
-        self.addCleanup(setattr, cli, "LONG_TRANSCRIPT_WORDS", 30_000)
+        self.enterContext(mock.patch.object(transcribe, "LONG_TRANSCRIPT_WORDS", 1))
         code, out, err = self.rec2notes(self.note, self.audio)
         self.assertEqual(code, 0, err)
         self.assertRegex(out, r"⚠ Transcript  \d+ words, unusually long")

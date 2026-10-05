@@ -21,6 +21,11 @@ class Doctor(Sandbox):
         self.assertNotIn("again", out)
         self.assertIn("logged in", out)
 
+    def test_the_first_row_is_the_version(self):
+        with mock.patch("importlib.metadata.version", return_value="9.9.9"):
+            _, out, _ = self.rec2notes("doctor")
+        self.assertRegex(out.splitlines()[1], r"^✓ rec2notes +9\.9\.9$")
+
     def test_details_start_in_one_column(self):
         _, out, _ = self.rec2notes("doctor")
         columns = {line.index(detail) for line, detail in

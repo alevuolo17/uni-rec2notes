@@ -9,11 +9,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import Abort, check, courses, doctor, menu, merge, paths, setup, stopping, transcribe, ui, uninstall
+from . import Abort, version, check, courses, doctor, menu, merge, paths, setup, stopping, transcribe, ui, uninstall
 
 COMPLETED_MARKERS = ("[^conflitto-", check.MISSED_TOPICS_HEADING, "[^non-annotati]")  # the last: the old missed-topics footnote
 CREATE_LENGTH = 20  # the created note's length, in % of the transcript's words; to settle from real runs
-LONG_TRANSCRIPT_WORDS = 30_000  # about three hours of speech; past this a merge is slow and eats a lot of usage
 WARNING_PASSAGES = 5  # how many changed passages to show in the terminal; check.txt has all
 
 
@@ -44,6 +43,7 @@ def build_parser() -> Parser:
                    help="first clean the note into '<note> (pulito).md' (see `rec2notes clean`) and merge that copy")
     p.add_argument("--force", action="store_true", help="replace an existing '(completo)' or '(pulito)' file, keeping a copy in the run directory")
     p.add_argument("--dry-run", action="store_true", help="print the assembled input (cached transcripts only) and run nothing")
+    p.add_argument("--version", action="version", version=f"rec2notes {version()}")
     p.set_defaults(create=False)
     return p
 
@@ -359,7 +359,7 @@ def target_words(words: int, percent: int) -> int:
 def confirm_size(transcript: str, console: ui.Console) -> None:
     """Show the transcript's size before the merge; when it is unusually long, ask on a terminal, else warn."""
     words = len(transcript.split())
-    if words <= LONG_TRANSCRIPT_WORDS:
+    if words <= transcribe.LONG_TRANSCRIPT_WORDS:
         console.mark("ok", "Transcript", f"{words:,} words")
         return
     console.mark("warn", "Transcript", f"{words:,} words, unusually long")

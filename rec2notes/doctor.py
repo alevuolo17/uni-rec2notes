@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import Abort, courses, paths, transcribe, ui
+from . import Abort, version, courses, paths, transcribe, ui
 
 PACKAGES_HINT = "install it with your package manager (the README lists the packages)"
 COURSES = "`rec2notes` → 3 Courses"  # where courses and their folders are set
@@ -18,7 +18,7 @@ AUTH_TIMEOUT = 20  # seconds; `claude auth status` may reach the network
 
 def run(console: ui.Console) -> int:
     """Print the checklist; 1 if anything failed (warnings don't count), else 0."""
-    results = [claude_installed(), claude_logged_in(), ffmpeg(), rec2notes_folder()]
+    results = [("ok", "rec2notes", version(), None), claude_installed(), claude_logged_in(), ffmpeg(), rec2notes_folder()]
     if results[-1][0] == "ok":  # the rest lives in the folder
         results += [whisper_cli(), *models(paths.whisper_model_choice()), *folders()]
     width = max(ui.LABEL_WIDTH, *(len(label) for _, label, _, _ in results))

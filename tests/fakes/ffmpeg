@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """Fake ffmpeg: writes a silent 16 kHz mono WAV as the output (the last argument),
-one second long per byte of the input file (after -i)."""
+one second long per byte of the input file (after -i). With no output, only an input,
+it prints the input's Duration line on stderr and fails, as ffmpeg does; an empty input
+has no Duration, like a file ffmpeg can't read."""
 import os
 import sys
 import wave
 
 args = sys.argv[1:]
-seconds = os.path.getsize(args[args.index("-i") + 1])
+source = args[args.index("-i") + 1]
+seconds = os.path.getsize(source)
+if args[-1] == source:
+    if seconds:
+        print(f"  Duration: {seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}.00, start: 0.000000",
+              file=sys.stderr)
+    else:
+        print(f"{source}: Invalid data found when processing input", file=sys.stderr)
+    sys.exit("At least one output file must be specified")
 with wave.open(args[-1], "wb") as out:
     out.setnchannels(1)
     out.setsampwidth(2)

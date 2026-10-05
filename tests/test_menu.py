@@ -95,6 +95,12 @@ class Hub(Sandbox):
         self.assertEqual(args.note, self.note)
         self.assertIn(f"Not a file: {self.tmp / 'nope.md'}", out)
 
+    def test_backslash_space_is_a_folder_separator_on_windows(self):
+        with mock.patch.object(paths, "WINDOWS", True):
+            self.assertEqual(menu._clean('"C:\\Users\\me\\ notes\\x.md"'), "C:\\Users\\me\\ notes\\x.md")
+        with mock.patch.object(paths, "WINDOWS", False):
+            self.assertEqual(menu._clean("/home/me/my\\ notes.md"), "/home/me/my notes.md")
+
     def test_several_parts(self):
         second = self.make_audio("parte2.m4a", b"audio two")
         args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), str(self.tmp / "nope.m4a"), str(second), "", "", "")
@@ -256,6 +262,28 @@ class Hub(Sandbox):
         self.assertNotIn("Can't start yet", out)
         self.assertEqual(args.whisper_model, MODEL)
 
+    def test_the_confirmation_guesses_the_transcript_size_from_the_recording(self):
+        lecture = self.make_audio("lunga.m4a", b"x" * 5400)
+        _, out, _ = self.hub("1", "1", str(self.note), "", str(lecture), "", "", "n")
+        self.assertIn("Transcript     about 9,900 words, from 1h 30m of audio", out)
+        self.assertNotIn("unusually long", out)
+
+    def test_the_confirmation_counts_a_cached_transcript(self):
+        cache = paths.transcript_cache(MODEL, transcribe.sha256_file(self.audio))
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text("[00:00:00] Lezione di reti.\n", encoding="utf-8")
+        _, out, _ = self.hub("1", "2", str(self.note.with_name("Lezione 2.md")), str(self.audio), "", "", "n")
+        self.assertIn("Transcript     4 words, cached", out)
+
+    def test_the_confirmation_warns_about_an_unusually_long_transcript(self):
+        self.enterContext(mock.patch.object(transcribe, "LONG_TRANSCRIPT_WORDS", 1))
+        _, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "n")
+        self.assertIn("unusually long: the merge will be slow and use a lot of your agent's quota", out)
+
+    def test_a_recording_ffmpeg_cannot_read_has_an_unknown_size(self):
+        _, out, _ = self.hub("1", "1", str(self.note), "", str(self.make_audio("vuota.m4a", b"")), "", "", "n")
+        self.assertIn("Transcript     size unknown: ffmpeg can't read the recording's length", out)
+
     def test_the_menu_arguments_run_like_the_flags(self):
         args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
         code = cli.run(args, ui.Console(io.StringIO(), io.StringIO()))
@@ -272,6 +300,8 @@ class Hub(Sandbox):
         args, out, _ = self.hub("1", "1", str(self.note), "y", str(self.audio), "", "", "")
         self.assertTrue(args.clean)
         self.assertIn("Clean          yes, then merge the cleaned copy", out)
+        words = len(self.note.read_text(encoding="utf-8").split())
+        self.assertIn(f"               an extra agent call on the note's {words:,} words", out)
 
     def test_the_cleaning_answer_must_be_yes_or_no(self):
         args, out, _ = self.hub("1", "1", str(self.note), "maybe", "y", str(self.audio), "", "", "")

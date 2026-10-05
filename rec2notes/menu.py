@@ -83,7 +83,9 @@ def _guided_run(console, ask, parse) -> argparse.Namespace | None:
     return _confirm(console, ask, args, [
         ("Course", [course.name], ()),
         ("Note", [note.name], ()),
-        *([("Clean", ["yes, then merge the cleaned copy"], ())] if clean else []),
+        *([("Clean", ["yes, then merge the cleaned copy",
+                      f"an extra agent call on the note's {len(note.read_text(encoding='utf-8').split()):,} words"],
+            ())] if clean else []),
         ("Recording", [a.name for a in audio], ()),
     ])
 
@@ -105,11 +107,13 @@ def _confirm(console, ask, args: argparse.Namespace, rows: list[tuple[str, list[
     """Show what will run, with the settings and anything that stops it; Enter starts it, `c` changes the
     settings for this run only."""
     sums = [transcribe.sha256_file(a) for a in args.audio]
+    seconds = [transcribe.audio_seconds(a) for a in args.audio]
     while True:
+        caches = [paths.transcript_cache(args.whisper_model, s) for s in sums]
         console.line()
-        console.summary([*rows, *_settings_rows(args)])
+        console.summary([*rows, *_settings_rows(args), *_transcript_rows(seconds, caches)])
         console.line()
-        problems = doctor.start_problems(args.whisper_model, [paths.transcript_cache(args.whisper_model, s) for s in sums])
+        problems = doctor.start_problems(args.whisper_model, caches)
         if problems:
             console.line("Can't start yet:")
             for problem in problems:
@@ -135,6 +139,26 @@ def _settings_rows(args: argparse.Namespace) -> list[tuple[str, list[str], tuple
         ("Effort", [args.effort], ()),
         ("Whisper", [args.whisper_model], ()),
     ]
+
+
+def _transcript_rows(seconds: list[float | None], caches: list[Path]) -> list[tuple[str, list[str], tuple]]:
+    """The transcript's size, which is most of what the merge costs: exact for the cached parts, else guessed from
+    the recordings' length."""
+    words, guessed = 0, False
+    for part_seconds, cache in zip(seconds, caches):
+        if cache.exists():
+            words += len(cache.read_text(encoding="utf-8").split())
+        elif part_seconds is None:
+            return [("Transcript", ["size unknown: ffmpeg can't read the recording's length"], ())]
+        else:
+            words += round(part_seconds / 60 * transcribe.WORDS_PER_MINUTE)
+            guessed = True
+    audio = ui.rough(sum(s for s in seconds if s))
+    size = f"about {max(100, round(words, -2)):,} words, from {audio} of audio" if guessed else f"{words:,} words, cached"
+    if words <= transcribe.LONG_TRANSCRIPT_WORDS:
+        return [("Transcript", [size], ())]
+    return [("Transcript", [size, "unusually long: the merge will be slow and use a lot of your agent's quota"],
+             (ui.YELLOW,))]
 
 
 def _ask_recordings(console, ask) -> list[Path]:
@@ -409,11 +433,11 @@ def _file_or_none(console, text: str) -> Path | None:
 
 
 def _clean(text: str) -> str:
-    """A path as typed, pasted or dragged into the terminal: without quotes or backslash-escaped spaces."""
+    """A path as typed, pasted or dragged into the terminal: without quotes, or backslash-escaped spaces off Windows (there a backslash separates folders)."""
     text = text.strip()
     if len(text) > 1 and text[0] == text[-1] and text[0] in "'\"":
         text = text[1:-1]
-    return text.replace("\\ ", " ")
+    return text if paths.WINDOWS else text.replace("\\ ", " ")
 
 
 def _ask(ask, prompt: str, allow_empty: bool = False) -> str:

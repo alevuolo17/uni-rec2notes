@@ -415,6 +415,33 @@ class Questions(QuestionsMixin, SetupSandbox):
         self.assertEqual((code, asked), (0, []))
         self.steps["build"].assert_called_once_with("cpu")
 
+    def built_with(self, backend):
+        cache = paths.whisper_dir() / "build" / "CMakeCache.txt"
+        cache.parent.mkdir(parents=True)
+        cache.write_text("".join(f"{flag.removeprefix('-D').replace('=', ':BOOL=')}\n" for flag in setup.cmake_flags(backend)))
+
+    def test_a_rerun_keeps_the_installed_backend_over_auto(self):
+        self.add_tool("glslc")  # auto would pick vulkan
+        self.built_with("cpu")
+        code, out, _ = self.setup("--whisper-model", "tiny", answers=[])
+        self.assertEqual(code, 0)
+        self.steps["build"].assert_called_once_with("cpu")
+        self.assertIn("Backend: cpu. The one installed; --backend changes it.", out)
+
+    def test_the_menu_offers_the_installed_backend_first(self):
+        self.add_tool("nvcc")
+        self.built_with("cuda")
+        code, out, asked = self.setup(answers=["", "", "", ""])
+        self.assertEqual((code, asked[2]), (0, "Choose 1-4 [3]: "))
+        self.assertIn("NVIDIA, with the CUDA toolkit, installed", out)
+        self.steps["build"].assert_called_once_with("cuda")
+
+    def test_an_explicit_backend_replaces_the_installed_one(self):
+        self.add_tool("glslc")
+        self.built_with("cpu")
+        self.setup("--backend", "vulkan", answers=[])
+        self.steps["build"].assert_called_once_with("vulkan")
+
 
 class QuestionsOnWindows(QuestionsMixin, SetupSandbox):
     """The Windows flow: cpu or vulkan, no build tools, the prebuilt whisper.cpp, turbo."""
@@ -464,6 +491,46 @@ class QuestionsOnWindows(QuestionsMixin, SetupSandbox):
         code, out, _ = self.setup("--backend", "cuda", answers=[])
         self.assertEqual(code, 1)
         self.assertIn("no cuda backend", out)
+
+    def installed(self, backend, version="b5130"):
+        bin = paths.whisper_cli_built().parent
+        bin.mkdir(parents=True)
+        for name in ("whisper-cli.exe", "ggml-cpu-haswell.dll", *(["ggml-vulkan.dll"] if backend == "vulkan" else [])):
+            (bin / name).touch()
+        (bin / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+
+    def test_a_rerun_keeps_vulkan(self):
+        self.installed("vulkan")
+        code, out, _ = self.setup("--whisper-model", "tiny", answers=[])
+        self.assertEqual(code, 0)
+        self.steps["install_prebuilt"].assert_called_once_with("vulkan")
+        self.assertIn("Backend: vulkan. The one installed; --backend changes it.", out)
+
+    def test_the_menu_offers_the_installed_vulkan_first(self):
+        self.installed("vulkan")
+        code, out, asked = self.setup(answers=["", "", "", ""])
+        self.assertEqual((code, asked[2]), (0, "Choose 1-2 [2]: "))
+        self.assertIn("about 5x faster, installed", out)
+        self.steps["install_prebuilt"].assert_called_once_with("vulkan")
+
+    def test_vulkan_from_an_older_pinned_zip_is_kept(self):
+        self.installed("vulkan", version="0" * 64)  # a checksum no longer in WINDOWS_BUILDS
+        self.setup("--whisper-model", "tiny", answers=[])
+        self.steps["install_prebuilt"].assert_called_once_with("vulkan")
+
+    def test_a_cpu_install_stays_cpu(self):
+        self.installed("cpu")
+        self.setup("--whisper-model", "tiny", answers=[])
+        self.steps["install_prebuilt"].assert_called_once_with("cpu")
+
+    def test_vulkan_kept_after_the_driver_is_gone_says_how_to_switch(self):
+        self.installed("vulkan")
+        self.driver.return_value = False
+        code, out, _ = self.setup("--whisper-model", "tiny", answers=[])
+        self.assertEqual(code, 1)
+        self.assertIn("needs a Vulkan driver", out)
+        self.assertIn("or use --backend cpu", out)
+        self.steps["install_prebuilt"].assert_not_called()
 
     def test_another_model_is_saved_for_the_runs(self):
         code, out, _ = self.setup(answers=["", "", "", "1"])
