@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from rec2notes import Abort, courses, paths
+from rec2notes import Abort, courses, i18n, paths
 
 from .helpers import Sandbox
 
@@ -207,3 +207,18 @@ class FolderOverlap(Sandbox):
     def test_no_folders_configured_accepts_anything(self):
         paths.folders_file().unlink()
         courses.check_folder_free(Path("/home"), "fisica")
+
+
+class InItalian(Sandbox):
+    def setUp(self):
+        super().setUp()
+        i18n.set_language("it")
+
+    def test_the_folders_template_and_the_errors_are_in_italian(self):
+        template = courses.folders_template({"reti": courses.Course("reti", "Reti", "tcp")})
+        self.assertTrue(template.startswith("# La cartella del vault di questo computer"))
+        self.assertIn("# reti = ''  # Reti", template)
+        with self.assertRaisesRegex(Abort, "il nome breve 'Bad' deve essere fatto di lettere minuscole"):
+            courses.check_new_slug("Bad")
+        with self.assertRaisesRegex(Abort, "Non c'è ancora nessun corso"):
+            courses.resolve_course(self.tmp / "x.md", {}, {})

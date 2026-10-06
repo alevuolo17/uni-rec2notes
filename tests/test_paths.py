@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rec2notes import Abort, paths
+from rec2notes import Abort, i18n, merge, paths
 
 from .helpers import Sandbox
 
@@ -104,3 +104,18 @@ class WhisperModelChoice(Sandbox):
             (self.folder / "settings.toml").write_text(text, encoding="utf-8")
             with self.assertRaisesRegex(Abort, error):
                 paths.whisper_model_choice()
+
+
+class InItalian(Sandbox):
+    def setUp(self):
+        super().setUp()
+        i18n.set_language("it")
+
+    def test_a_missing_folder_names_the_translated_menu_entry(self):
+        shutil.rmtree(self.folder)
+        with self.assertRaisesRegex(Abort, "manca .*`rec2notes` → Impostazioni"):
+            paths.folder()
+
+    def test_the_agent_install_hint(self):
+        self.assertEqual(merge.AGENTS["antigravity"].install_hint(),
+                         "vedi https://antigravity.google/docs/cli, e assicurati che `agy` sia nel PATH")

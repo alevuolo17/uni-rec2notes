@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import Abort, paths, stopping
 from .courses import Course
+from .i18n import t
 
 
 def build_input(course: Course, note: str, transcript: str) -> str:
@@ -44,7 +45,7 @@ class Agent:
     page: str  # where to get it
 
     def install_hint(self) -> str:
-        return f"see {self.page}, and make sure `{self.program}` is on PATH"
+        return t("merge.install_hint", page=self.page, program=self.program)
 
 
 AGENTS = {"claude": Agent("Claude Code", "claude", "https://claude.com/claude-code"),
@@ -103,9 +104,9 @@ def antigravity_models() -> list[str]:
                                  encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, cwd=home,
                                  env=agy_env(home), timeout=AGY_TIMEOUT)
     except subprocess.TimeoutExpired:
-        raise Abort(f"agy did not answer in {AGY_TIMEOUT} s: not signed in, or no network; run `agy` once and sign in") from None
+        raise Abort(t("merge.agy_timeout", seconds=AGY_TIMEOUT)) from None
     except OSError as e:
-        raise Abort(f"could not run agy: {e.strerror}") from None
+        raise Abort(t("merge.agy_cannot_run", reason=e.strerror)) from None
     finally:
         try:
             remove_home(home)
@@ -113,8 +114,8 @@ def antigravity_models() -> list[str]:
             pass  # it holds no prompt: agy only listed the models
     models = [line.split("\t")[0] for line in listing.stdout.splitlines() if "\t" in line]
     if listing.returncode or not models:
-        last = (listing.stderr.strip().splitlines() or ["no models listed"])[-1]
-        raise Abort(f"`agy models` failed: {last.rstrip('.')}; run `agy` once and sign in")
+        last = (listing.stderr.strip().splitlines() or [t("merge.no_models")])[-1]
+        raise Abort(t("merge.agy_models_failed", last=last.rstrip(".")))
     return models
 
 
@@ -154,14 +155,13 @@ def run_agent(agent: str, input_text: str, run_dir: Path, effort: str | None, mo
         stopping.check()
         if status == 0 and reply.strip():
             return Reply(reply, tools)
-        problem = f"exited with status {status}" if status else "returned an empty reply"
+        problem = t("merge.exited", status=status) if status else t("merge.empty_reply")
         if attempt == 1:
-            notify(f"{program} {problem}; retrying once...")
+            notify(t("merge.retrying", program=program, problem=problem))
     tail = stderr_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-5:]
     details = ("\n  " + "\n  ".join(tail)) if tail else ""
-    blocked = (f"\nIt tried to use {', '.join(denied)}, which rec2notes blocks: the transcript may contain "
-               "instructions aimed at the agent." if denied else "")
-    raise Abort(f"{program} {problem} twice. The reply and {program}'s stderr are kept in {run_dir}{details}{blocked}")
+    blocked = "\n" + t("merge.blocked", tools=", ".join(denied)) if denied else ""
+    raise Abort(t("merge.twice", program=program, problem=problem, run_dir=run_dir, details=details, blocked=blocked))
 
 
 def _call_claude(input_text: str, run_dir: Path, effort: str, model: str | None, prompt: Path,
@@ -199,7 +199,7 @@ def _call_antigravity(input_text: str, run_dir: Path, model: str, prompt: Path, 
             try:
                 remove_home(folder)
             except OSError as e:
-                notify(f"could not delete {folder}, which may hold a copy of the conversation ({e.strerror}): delete it yourself")
+                notify(t("merge.cannot_delete", folder=folder, reason=e.strerror))
     with open(events_path, "a", encoding="utf-8") as f:
         f.write(events)
     return proc.returncode, *_read_events(events)

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import Abort, paths
+from .i18n import t
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,7 @@ def _read_courses(path: Path) -> dict[str, Course]:
     for slug, table in _load_toml(path).items():
         fields = table if isinstance(table, dict) else {}
         if not all(isinstance(fields.get(key), str) and fields[key].strip() for key in ("name", "vocab")):
-            raise Abort(f"{path}: course [{slug}] needs a non-empty `name` and `vocab`")
+            raise Abort(t("courses.needs_fields", path=path, slug=slug))
         courses[slug] = Course(slug, fields["name"].strip(), fields["vocab"].strip())
     return courses
 
@@ -37,10 +38,10 @@ def _read_courses(path: Path) -> dict[str, Course]:
 def check_new_slug(slug: str) -> None:
     """Refuse a slug that can't name a new course."""
     if not re.fullmatch(r"[a-z0-9_-]+", slug):
-        raise Abort(f"course slug {slug!r} must be lowercase letters, digits, - or _")
+        raise Abort(t("courses.slug_invalid", slug=slug))
     path = paths.courses_file()
     if slug in load_courses(path):
-        raise Abort(f"course {slug!r} already exists (edit {path} to change it)")
+        raise Abort(t("courses.exists", slug=slug, path=path))
 
 
 def add_course(slug: str, name: str, vocab: str) -> None:
@@ -49,7 +50,7 @@ def add_course(slug: str, name: str, vocab: str) -> None:
     name, vocab = " ".join(name.split()), " ".join(vocab.split())
     check_new_slug(slug)
     if not name or not vocab:
-        raise Abort("a course needs a non-empty name and vocab")
+        raise Abort(t("courses.empty"))
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     entry = f"[{slug}]\nname = {_quote(name)}\nvocab = {_quote(vocab)}\n"
     _write(path, f"{text.rstrip()}\n\n{entry}" if text.strip() else entry)
@@ -59,10 +60,10 @@ def update_course(slug: str, name: str | None = None, vocab: str | None = None) 
     """Change the name and/or vocab of one of the user's courses, keeping the rest of the file."""
     path = paths.courses_file()
     if slug not in load_courses(path):
-        raise Abort(f"unknown course {slug!r} (courses: {', '.join(load_courses(path))})")
+        raise Abort(t("courses.unknown", slug=slug, names=", ".join(load_courses(path))))
     new = {"name": name and " ".join(name.split()), "vocab": vocab and " ".join(vocab.split())}
     if (name is not None and not new["name"]) or (vocab is not None and not new["vocab"]):
-        raise Abort("a course needs a non-empty name and vocab")
+        raise Abort(t("courses.empty"))
     lines = path.read_text(encoding="utf-8").splitlines()
     inside = False
     for i, line in enumerate(lines):
@@ -77,7 +78,7 @@ def update_course(slug: str, name: str | None = None, vocab: str | None = None) 
         check.write_text(text, encoding="utf-8")
         edited = load_courses(check)[slug]
     if any(value and getattr(edited, key) != value for key, value in new.items()):
-        raise Abort(f"could not change {slug} in {path}: edit that file by hand")
+        raise Abort(t("courses.cannot_change", slug=slug, path=path))
     _write(path, text)
 
 
@@ -85,7 +86,7 @@ def rename_course(old: str, new: str) -> None:
     """Rename a course's slug in courses.toml and, if it has one, in folders.toml; the folder itself is untouched."""
     path, folders_path = paths.courses_file(), paths.folders_file()
     if old not in load_courses(path):
-        raise Abort(f"unknown course {old!r} (courses: {', '.join(load_courses(path))})")
+        raise Abort(t("courses.unknown", slug=old, names=", ".join(load_courses(path))))
     check_new_slug(new)
     lines = path.read_text(encoding="utf-8").splitlines()
     lines = [f"[{new}]" if line.strip() == f"[{old}]" else line for line in lines]
@@ -95,7 +96,7 @@ def rename_course(old: str, new: str) -> None:
         check.write_text(text, encoding="utf-8")
         renamed = load_courses(check)
     if new not in renamed or old in renamed:
-        raise Abort(f"could not rename {old} in {path}: edit that file by hand")
+        raise Abort(t("courses.cannot_rename", old=old, path=path))
     folders = folders_path.read_text(encoding="utf-8") if folders_path.exists() else ""
     folders = re.sub(rf"(?m)^(\s*){re.escape(old)}(\s*=)", rf"\g<1>{new}\g<2>", folders)
     _write(path, text)
@@ -109,15 +110,13 @@ def absolute_folder(text: str) -> Path:
     typed = text.strip()
     folder = Path(os.path.expanduser(typed))
     if not typed or not folder.is_absolute():
-        start = "a drive, like C:\\," if paths.WINDOWS else "/"
-        raise Abort(f"{typed!r} is not an absolute path: it must start with {start} or ~")
+        raise Abort(t("courses.not_absolute_windows" if paths.WINDOWS else "courses.not_absolute_other", typed=typed))
     folder = Path(os.path.normpath(folder))
     existing = next(p for p in (folder, *folder.parents) if p.exists())
     if not existing.is_dir():
-        raise Abort(f"{existing} is not a folder")
+        raise Abort(t("courses.not_a_folder", path=existing))
     if not os.access(existing, os.W_OK | os.X_OK):
-        raise Abort(f"you have no write access to {existing}" if existing == folder
-                    else f"{folder} can't be created: you have no write access to {existing}")
+        raise Abort(t("courses.no_write" if existing == folder else "courses.cannot_create", folder=folder, path=existing))
     return folder
 
 
@@ -135,8 +134,7 @@ def check_folder_free(folder: Path, slug: str) -> None:
     """Refuse a folder that is, contains or is inside another course's folder: a note there would match both."""
     for other, other_folder in load_folders(load_courses()).items():
         if other != slug and overlaps(str(folder).strip("/"), other_folder):
-            raise Abort(f"{folder} overlaps the folder of {other} ({other_folder}): notes there would match both "
-                        "courses. Pick a folder that isn't inside, and doesn't contain, another course's folder.")
+            raise Abort(t("courses.overlaps", folder=folder, other=other, other_folder=other_folder))
 
 
 def set_folder(slug: str, folder: str) -> None:
@@ -174,9 +172,9 @@ def read_folders(courses: dict[str, Course], path: Path | None = None) -> dict[s
     folders = {}
     for slug, folder in _load_toml(path).items():
         if slug not in courses:
-            raise Abort(f"{path}: unknown course {slug!r} (courses: {', '.join(courses)})")
+            raise Abort(f"{path}: " + t("courses.unknown", slug=slug, names=", ".join(courses)))
         if not isinstance(folder, str):
-            raise Abort(f"{path}: the folder for {slug!r} must be a string")
+            raise Abort(t("courses.folder_not_string", path=path, slug=slug))
         if folder.strip().strip("/"):
             folders[slug] = folder.strip()
     return folders
@@ -191,7 +189,7 @@ def resolve_course(note: Path, courses: dict[str, Course], folders: dict[str, st
     """The --course slug if given, otherwise the one course whose folder is in the note's path."""
     if slug:
         if slug not in courses:
-            raise Abort(f"unknown course {slug!r} (courses: {', '.join(courses)})")
+            raise Abort(t("courses.unknown", slug=slug, names=", ".join(courses)))
         return courses[slug]
     # Both the path as given and with symlinks resolved: vaults are often reached through a link.
     candidates = (Path(os.path.abspath(note)).parent.parts, note.resolve().parent.parts)
@@ -199,17 +197,12 @@ def resolve_course(note: Path, courses: dict[str, Course], folders: dict[str, st
     if len(matches) == 1:
         return courses[matches[0]]
     if matches:
-        raise Abort(f"the note's path matches several courses ({', '.join(matches)}); pick one with --course")
+        raise Abort(t("courses.several", names=", ".join(matches)))
     raise Abort(_no_match_message(courses, folders))
 
 
 def folders_template(courses: dict[str, Course]) -> str:
-    lines = [
-        "# This computer's vault folder for each course: `rec2notes` → Courses fills it in.",
-        "# By hand: the absolute path of the folder that holds a course's notes, in single quotes,",
-        "# such as reti = 'C:\\Users\\me\\Appunti\\Reti' or reti = '/home/me/Appunti/Reti'.",
-        "",
-    ]
+    lines = [*t("courses.template").splitlines(), ""]
     lines += [f"# {slug} = ''  # {course.name}" for slug, course in courses.items()]
     return "\n".join(lines) + "\n"
 
@@ -222,18 +215,18 @@ def _contains(dirs: tuple[str, ...], folder: tuple[str, ...]) -> bool:
 
 def _no_match_message(courses: dict[str, Course], folders: dict[str, str]) -> str:
     path = paths.folders_file()
-    lines = ["could not tell the course from the note's path."]
+    lines = [t("courses.no_match")]
     if not path.exists():
-        lines.append(f"No folders are configured on this computer: {path} does not exist (run {paths.SETUP} to create it).")
+        lines.append(t("courses.no_folders_file", path=path, setup=paths.SETUP))
     elif not folders:
-        lines.append(f"No folders are set in {path}.")
+        lines.append(t("courses.no_folders_set", path=path))
     else:
-        lines.append(f"Folders configured in {path}:")
+        lines.append(t("courses.folders_configured", path=path))
         lines += [f"  {slug}: {folder}" for slug, folder in folders.items()]
     if courses:
-        lines.append(f"Set this course's folder there, or pass --course SLUG (one of: {', '.join(courses)}).")
+        lines.append(t("courses.set_folder", names=", ".join(courses)))
     else:
-        lines.append("No courses are defined yet: add one with `rec2notes course add`.")
+        lines.append(t("courses.none_yet"))
     return "\n".join(lines)
 
 
@@ -242,6 +235,6 @@ def _load_toml(path: Path) -> dict:
         with open(path, "rb") as f:
             return tomllib.load(f)
     except FileNotFoundError:
-        raise Abort(f"{path} not found") from None
+        raise Abort(t("courses.not_found", path=path)) from None
     except tomllib.TOMLDecodeError as e:
         raise Abort(f"{path}: {e}") from None

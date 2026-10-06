@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 (2026-10-06)
+
+- test_doctor: take the VAD model name from paths, not a literal
+- docs: say that rec2notes speaks English or Italian, and use the Italian menu names
+- check, stopping, transcribe: translate their messages into Italian
+- merge, uninstall, paths: translate their messages into Italian
+- doctor: translate the checklist and its fixes into Italian
+- courses: translate the course errors and the folders.toml header into Italian
+- cli: translate the command line and the run's output into Italian
+- menu: translate the menu into Italian, names included
+- settings: add a Language row and key, and load the saved language on every run
+- setup: ask the language first and speak it, in English or Italian
+- i18n: add the language setting and a message catalog, nothing translated yet
+
 ## 0.3.2 (2026-10-06)
 
 - readme: split the agent install by agent, then by OS

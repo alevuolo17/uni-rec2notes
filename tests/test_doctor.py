@@ -29,9 +29,29 @@ class Doctor(Sandbox):
     def test_details_start_in_one_column(self):
         _, out, _ = self.rec2notes("doctor")
         columns = {line.index(detail) for line, detail in
-                   ((l, d) for l in out.splitlines() for d in (MODEL, "folder set", "silero-v5.1.2", "logged in")
+                   ((l, d) for l in out.splitlines() for d in (MODEL, "folder set", paths.VAD_MODEL, "logged in")
                     if l.startswith("✓") and l.endswith(d))}
         self.assertEqual(len(columns), 1, out)
+
+    def test_in_italian_with_the_details_in_one_column(self):
+        paths.save_setting("language", "it")
+        code, out, _ = self.rec2notes("doctor")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Pronto all'uso; 2 da controllare.", out)
+        self.assertRegex(out, r"✓ Accesso Claude Code +accesso effettuato")
+        columns = {line.index(detail) for line, detail in
+                   ((l, d) for l in out.splitlines() for d in (MODEL, "accesso effettuato", paths.VAD_MODEL))
+                   if line.startswith("✓") and line.endswith(detail)}
+        self.assertEqual(len(columns), 1, out)
+
+    def test_italian_failures_say_how_many_and_what_to_do(self):
+        paths.save_setting("language", "it")
+        os.environ["FAKE_CLAUDE_MODE"] = "logged-out"
+        code, out, _ = self.rec2notes("doctor")
+        self.assertEqual(code, 1)
+        self.assertIn("1 problema da risolvere, 2 da controllare.", out)
+        self.assertIn("accesso non effettuato", out)
+        self.assertIn("poi lancia di nuovo `rec2notes doctor`", out)
 
     def test_not_logged_in_fails_with_the_fix(self):
         os.environ["FAKE_CLAUDE_MODE"] = "logged-out"

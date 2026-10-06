@@ -8,6 +8,7 @@ import tomllib
 from pathlib import Path
 
 from . import Abort
+from .i18n import t
 
 WINDOWS = sys.platform == "win32"
 TOOL = "uni-rec2notes"
@@ -56,7 +57,7 @@ def pointed_folder() -> Path | None:
     except tomllib.TOMLDecodeError as e:
         raise Abort(f"{pointer}: {e}") from None
     if not isinstance(value, str) or not Path(value).is_absolute():
-        raise Abort(f"{pointer}: `folder` must be the absolute path of your rec2notes folder")
+        raise Abort(t("paths.pointer_not_absolute", pointer=pointer))
     return Path(value)
 
 
@@ -64,10 +65,9 @@ def folder() -> Path:
     """The rec2notes folder; it must exist, as only setup creates it."""
     pointed = pointed_folder()
     if pointed is None:
-        raise Abort(f"no rec2notes folder yet: run `{SETUP}` first")
+        raise Abort(t("paths.no_folder", setup=SETUP))
     if not pointed.is_dir():
-        raise Abort(f"your rec2notes folder {pointed} is missing (moved or deleted?). "
-                    f"If you moved it, point to it in `rec2notes` → Settings; or run `{SETUP}` to make a new one")
+        raise Abort(t("paths.folder_missing", folder=pointed, settings=t("path.settings"), setup=SETUP))
     return pointed
 
 
@@ -99,7 +99,7 @@ def saved_settings() -> dict[str, str]:
         raise Abort(f"{file}: {e}") from None
     for key, value in settings.items():
         if not isinstance(value, str):
-            raise Abort(f"{file}: `{key}` must be text in quotes, such as {key} = \"high\"")
+            raise Abort(t("paths.must_be_text", file=file, key=key))
     return {key: value for key, value in settings.items() if value}
 
 
@@ -115,6 +115,7 @@ SETTING_ENV = {  # each setting's environment variable, which wins over the save
     "antigravity_model": "REC2NOTES_MODEL",
     "effort": "REC2NOTES_EFFORT",
     "whisper_model": "REC2NOTES_WHISPER_MODEL",
+    "language": "REC2NOTES_LANGUAGE",
 }
 
 
@@ -122,7 +123,7 @@ def setting_choice(key: str) -> str | None:
     """What runs use: the setting's environment variable, else the saved default, else the built-in one (None for
     the Claude model: Claude Code's default)."""
     built_in = {"agent": "claude", "claude_model": None, "antigravity_model": ANTIGRAVITY_MODEL, "effort": "high",
-                "whisper_model": default_whisper_model()}[key]
+                "whisper_model": default_whisper_model(), "language": "en"}[key]
     return os.environ.get(SETTING_ENV[key]) or saved_settings().get(key) or built_in
 
 

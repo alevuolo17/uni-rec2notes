@@ -3,7 +3,7 @@ import os
 import shutil
 from unittest import mock
 
-from rec2notes import cli, courses, menu, merge, paths, transcribe, ui
+from rec2notes import cli, courses, i18n, menu, merge, paths, transcribe, ui
 
 from .helpers import MODEL, Sandbox
 
@@ -319,14 +319,48 @@ class Hub(Sandbox):
         self.assertTrue(args.clean)
         self.assertEqual(out.count("Type y or n."), 1)
 
+    def test_the_hub_speaks_italian_and_takes_a_s_for_yes(self):
+        paths.save_setting("language", "it")
+        i18n.load()
+        _, out, _ = self.hub("x", "q")
+        self.assertIn("  3  Corsi: elencali, aggiungi i tuoi", out)
+        self.assertIn("  4  Impostazioni: ", out)
+        self.assertIn("Opzione non valida.", out)
+        console = ui.Console(io.StringIO(), io.StringIO())
+        for answer in ("s", "sì", "y"):
+            self.assertTrue(menu._yes(console, lambda prompt: answer, "?", default=False))
+        self.assertFalse(menu._yes(console, lambda prompt: "n", "?"))
+
     def test_settings_shows_the_folder(self):
         _, out, _ = self.hub("4", "x", "b", "q")
         self.assertIn(f"rec2notes folder  {self.folder}", out)
-        self.assertIn("Type c, a, m, e, w or b.", out)
+        self.assertIn("Type c, a, m, e, w, l or b.", out)
+        self.assertIn("Language          English", out)
         self.assertIn("Agent             Claude Code", out)
         self.assertIn("Model             Claude Code's default", out)
         self.assertIn("Effort            high", out)
         self.assertIn(f"Whisper model     {MODEL}", out)
+
+    def test_settings_changes_the_language_and_saves_it(self):
+        _, out, prompts = self.hub("4", "l", "2", "b", "q")
+        self.assertIn("Language of the screens:", out)
+        self.assertEqual(paths.saved_settings()["language"], "it")
+        self.assertIn(f"{'Lingua':<18}  Italiano", out)  # the redrawn screen is in the new language
+        self.assertEqual(prompts.count("[1] > "), 1)
+
+    def test_settings_language_keeps_the_current_one_on_enter(self):
+        paths.save_setting("language", "it")
+        i18n.load()  # cli.main does this before the menu
+        _, _, prompts = self.hub("4", "l", "", "b", "q")
+        self.assertEqual(prompts.count("[2] > "), 1)
+        self.assertEqual(paths.saved_settings()["language"], "it")
+
+    def test_settings_says_when_the_language_variable_wins(self):
+        os.environ["REC2NOTES_LANGUAGE"] = "it"
+        i18n.load()  # cli.main does this before the menu
+        _, out, _ = self.hub("4", "l", "1", "b", "q")
+        self.assertIn(f"{'Lingua':<18}  Italiano  (da $REC2NOTES_LANGUAGE, che vince su questa schermata)", out)
+        self.assertEqual(paths.saved_settings()["language"], "en")
 
     def test_settings_saves_the_defaults_runs_use(self):
         self.add_model("large-v3-turbo-q5_0")
@@ -368,7 +402,7 @@ class Hub(Sandbox):
         self.assertIn("Agent             Antigravity  (from $REC2NOTES_AGENT, which wins over this screen)", out)
         self.assertIn(f"Model             {paths.ANTIGRAVITY_MODEL}\n", out)
         self.assertNotIn("Effort", out)
-        self.assertIn("Type c, a, m, w or b.", out)
+        self.assertIn("Type c, a, m, w, l or b.", out)
 
     def test_settings_says_when_rec2notes_model_wins_over_the_claude_model(self):
         os.environ["REC2NOTES_MODEL"] = "opus"

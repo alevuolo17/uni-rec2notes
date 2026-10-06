@@ -4,7 +4,7 @@ import shutil
 import unittest
 from unittest import mock
 
-from rec2notes import paths, uninstall
+from rec2notes import i18n, paths, uninstall
 from tests.helpers import MODEL, Sandbox
 
 
@@ -30,6 +30,14 @@ class UninstallTest(Sandbox):
         self.assertFalse(paths.pointer_file().parent.exists())
         self.assertTrue(self.note.is_file())
         self.assertIn("pipx uninstall uni-rec2notes", out)
+
+    def test_in_italian_s_deletes_and_the_entries_are_described_in_italian(self):
+        i18n.set_language("it")
+        code, out, asked = self.uninstall("s")
+        self.assertEqual((code, asked), (0, ["Eliminarli? [s/N] "]))
+        self.assertIn("i tuoi corsi", out)
+        self.assertIn("Eliminato.", out)
+        self.assertFalse(self.folder.exists())
 
     def test_enter_or_no_deletes_nothing(self):
         for answer in ("", "n"):

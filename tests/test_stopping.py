@@ -1,7 +1,7 @@
 import signal
 import unittest
 
-from rec2notes import stopping
+from rec2notes import i18n, stopping
 
 
 class Handling(unittest.TestCase):
@@ -21,3 +21,11 @@ class Handling(unittest.TestCase):
             with self.assertRaises(stopping.Stopped) as raised:
                 stopping.check()
         self.assertEqual((raised.exception.message, raised.exception.status), ("interrupted", 130))
+
+
+class InItalian(unittest.TestCase):
+    def test_the_messages_are_in_italian(self):
+        self.addCleanup(i18n.set_language, "en")
+        i18n.set_language("it")
+        self.assertEqual(stopping.Stopped(signal.SIGTERM).message, "fermato da SIGTERM")
+        self.assertEqual(stopping.Stopped(signal.SIGINT).message, "interrotto")

@@ -37,6 +37,24 @@ class Output(Sandbox):
         self.assertEqual(len(list(self.output.parent.iterdir())), 2, "nothing else may appear in the vault")
         self.assertNotIn(b"\r\n", self.output.read_bytes())  # Windows' text mode would write CRLF
 
+    def test_a_run_in_italian_keeps_the_columns_aligned(self):
+        paths.save_setting("language", "it")
+        code, out, err = self.rec2notes(self.note, self.audio)
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"✓ {'Trascrizione':<12} 9s di audio · {MODEL}", out)
+        self.assertIn(f"✓ {'Unione':<12} claude · effort high", out)
+        self.assertIn(f"✓ {'Controllo':<12} solo aggiunte\n", out)
+        self.assertIn(f"✓ {'Scrittura':<12} Lezione 1 (completo).md\n", out)
+        self.assertIn(f"\n  {'Conflitti':<15} 1\n  {'Argomenti persi':<15} sì\n  {'Esecuzione':<15} ", out)
+        self.assertIn("[^conflitto-1]", self.output.read_text(encoding="utf-8"))  # the note keeps its Italian markers
+
+    def test_the_help_is_in_the_saved_language(self):
+        paths.save_setting("language", "it")
+        with contextlib.redirect_stdout(io.StringIO()) as out, self.assertRaises(SystemExit):
+            cli.main(["--help"])
+        self.assertIn("Completa degli appunti di lezione formattati", out.getvalue())
+        self.assertIn("`rec2notes` → Impostazioni", out.getvalue().replace("\n", " "))
+
     def test_runs_use_the_model_setup_saved(self):
         paths.save_setting("whisper_model", "tiny")
         self.add_model("tiny")

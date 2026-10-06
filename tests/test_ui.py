@@ -4,7 +4,7 @@ import re
 import unittest
 from unittest import mock
 
-from rec2notes import cli, ui
+from rec2notes import cli, i18n, ui
 
 from .helpers import Sandbox
 
@@ -24,6 +24,22 @@ class Formatting(unittest.TestCase):
         self.assertEqual(ui.rough(20), "<1m")
         self.assertEqual(ui.rough(44 * 60 + 10), "44m")
         self.assertEqual(ui.rough(63 * 60), "1h 03m")
+
+
+class LabelWidth(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(i18n.set_language, "en")
+
+    def test_english_keeps_its_column_and_italian_widens_it_to_fit_every_step_label(self):
+        self.assertEqual(ui.label_width(), ui.LABEL_WIDTH)
+        i18n.set_language("it")
+        self.assertGreater(ui.label_width(), ui.LABEL_WIDTH)
+        self.assertGreaterEqual(ui.label_width(), max(map(len, i18n.labels("step."))))
+
+    def test_the_summary_column_fits_its_longest_label(self):
+        out = io.StringIO()
+        ui.Console(out, io.StringIO()).summary([("Run", ["a"], ()), ("A label of eighteen", ["b"], ())])
+        self.assertEqual(out.getvalue().splitlines(), ["  Run                 a", "  A label of eighteen b"])
 
 
 @mock.patch.dict(os.environ, {"NO_COLOR": "1", "TERM": "xterm"})

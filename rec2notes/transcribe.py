@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from . import Abort, paths, stopping
+from .i18n import t
 
 PROGRESS = re.compile(r"progress =\s*(\d+)%")  # whisper-cli -pp, every 5%
 DLL_NOT_FOUND = 0xC0000135  # Windows' exit status for a program that can't start: whisper-cli without the VC++ runtime
@@ -90,7 +91,7 @@ def transcribe(audio: Path, cache: Path, model: str, vocab: str, run_dir: Path, 
         try:
             _run([paths.program("ffmpeg"), "-y", "-loglevel", "error", "-i", str(audio),
                   "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(wav)],
-                 log, f"ffmpeg could not convert {audio}")
+                 log, t("transcribe.ffmpeg_failed", audio=audio))
             seconds = _wav_seconds(wav)
             if on_progress:
                 on_progress(0)
@@ -101,13 +102,13 @@ def transcribe(audio: Path, cache: Path, model: str, vocab: str, run_dir: Path, 
                     "--vad", "--vad-model", str(paths.vad_model()),
                     "--prompt", " ".join(vocab.split()), "-oj", "-of", out.name, "-pp"]
             (run_dir / "whisper-args.txt").write_text("\n".join(args) + "\n", encoding="utf-8", newline="\n")
-            _run([whisper_cli(), "@whisper-args.txt"], log, f"whisper-cli failed on {audio}", on_progress, cwd=run_dir)
+            _run([whisper_cli(), "@whisper-args.txt"], log, t("transcribe.whisper_failed", audio=audio), on_progress, cwd=run_dir)
         finally:
             wav.unlink(missing_ok=True)  # a lecture is hundreds of MB as WAV, even when stopped halfway
     try:
         text = format_segments(parse_whisper_json(out.with_name(out.name + ".json").read_bytes()))
     except (OSError, ValueError, KeyError, TypeError) as e:
-        raise Abort(f"could not read whisper-cli's output for {audio}: {e}") from None
+        raise Abort(t("transcribe.cannot_read", audio=audio, error=e)) from None
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_name(f".{cache.name}.{os.getpid()}.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -141,8 +142,7 @@ def _run(cmd: list[str], log, failure: str, on_progress: Callable[[int], None] |
     stopping.check()
     code = proc.returncode
     if paths.WINDOWS and code == DLL_NOT_FOUND:
-        raise Abort(f"{failure}: a DLL it needs is missing. Install the Visual C++ runtime with "
-                    "`winget install Microsoft.VCRedist.2015+.x64`, then run rec2notes again")
+        raise Abort(t("transcribe.dll_missing", failure=failure))
     if code:
         tail = Path(log.name).read_text(encoding="utf-8", errors="replace").splitlines()[-5:]
-        raise Abort(f"{failure} (exit status {code}). Last lines of {log.name}:\n  " + "\n  ".join(tail))
+        raise Abort(t("transcribe.failed", failure=failure, code=code, log=log.name) + "\n  " + "\n  ".join(tail))

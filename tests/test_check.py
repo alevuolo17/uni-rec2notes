@@ -1,6 +1,6 @@
 import unittest
 
-from rec2notes import check
+from rec2notes import check, i18n
 
 NOTE = """# Handshake
 
@@ -49,3 +49,18 @@ class Summary(unittest.TestCase):
         self.assertEqual(check.summary(reply), (2, True))
         self.assertEqual(check.summary("Solo testo.\n"), (0, False))
         self.assertEqual(check.summary("Argomenti non presenti negli appunti, in una frase.\n"), (0, False))
+
+
+class InItalian(unittest.TestCase):
+    def setUp(self):
+        i18n.set_language("it")
+        self.addCleanup(i18n.set_language, "en")
+
+    def test_the_report_and_the_descriptions_are_in_italian_but_the_markers_are_not_translated(self):
+        change = check.Change("tre messaggi", "due messaggi")
+        self.assertEqual(check.describe(change), "«tre messaggi» è diventato «due messaggi»")
+        self.assertEqual(check.describe(check.Change("tre messaggi", "")), "«tre messaggi» manca")
+        report = check.report([change], 2, True)
+        self.assertIn("Note di conflitto: 2\nSezione degli argomenti persi: sì\n", report)
+        self.assertIn("1. appunti:  «tre messaggi»\n   risposta: «due messaggi»", report)
+        self.assertEqual(check.summary("x[^conflitto-1]\n[^conflitto-1]: a\n\n## Argomenti non presenti negli appunti\n"), (1, True))

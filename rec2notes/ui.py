@@ -14,6 +14,9 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from . import i18n
+from .i18n import t
+
 LABEL_WIDTH = 11
 DETAIL_WIDTH = 31
 BAR_WIDTH = 20
@@ -23,6 +26,11 @@ GREEN, DIM, BOLD, CYAN, YELLOW, RED = "32", "2", "1", "36", "33", "31"
 BANNER = Path(__file__).with_name("banner.txt")
 SUNSET = [(0xff, 0xd7, 0x5f), (0xff, 0x87, 0x5f), (0xff, 0x5f, 0x87), (0xd7, 0x5f, 0xd7)]  # banner rows, top to bottom
 SHADOW = 0.45  # the banner's ░ shadow: its row's color, darker
+
+
+def label_width() -> int:
+    """The checklist's label column: LABEL_WIDTH, or wider when a step label of the current language needs it."""
+    return max(LABEL_WIDTH, *map(len, i18n.labels("step.")))
 
 
 def duration(seconds: float) -> str:
@@ -125,19 +133,20 @@ class Console:
     def step(self, label: str, detail: str) -> "Step":
         return Step(self, label, detail)
 
-    def mark(self, mark: str, label: str, detail: str, right: str = "", width: int = LABEL_WIDTH) -> None:
+    def mark(self, mark: str, label: str, detail: str, right: str = "", width: int | None = None) -> None:
         """A finished checklist line: `✓ Label       detail   right`; `width` widens the label column."""
         symbol, code = MARKS[mark]
-        text = f"{self.style(symbol, code)} {label:<{width}} "
+        text = f"{self.style(symbol, code)} {label:<{width or label_width()}} "
         text += f"{detail:<{DETAIL_WIDTH}} {self.style(right, DIM)}" if right else detail
         self.line(text)
 
     def summary(self, rows: list[tuple[str, list[str], tuple[str, ...]]]) -> None:
         """Aligned `label  value` rows; a label with several values continues on indented lines."""
+        width = max(14, *(len(label) for label, _, _ in rows))
         for label, values, codes in rows:
             for i, value in enumerate(values):
                 shown = label if i == 0 else ""
-                self.line(f"  {self.style(shown.ljust(14), *codes)} {value}")
+                self.line(f"  {self.style(shown.ljust(width), *codes)} {value}")
 
     def _fit(self, segments, width: int) -> str:
         parts, used = [], 0
@@ -170,7 +179,7 @@ class Step:
             self._thread = threading.Thread(target=self._animate, daemon=True)
             self._thread.start()
         else:
-            self.console.line(f"  {self.label:<{LABEL_WIDTH}} {self.detail} …")
+            self.console.line(f"  {self.label:<{label_width()}} {self.detail} …")
         return self
 
     def __exit__(self, kind, error, traceback) -> bool:
@@ -187,7 +196,7 @@ class Step:
             self._progress_start = time.monotonic()
         self.percent = percent
         if not self.console.live and self._next_line <= percent < 100:
-            self.console.line(f"  {self.label:<{LABEL_WIDTH}} {self._progress_text()}")
+            self.console.line(f"  {self.label:<{label_width()}} {self._progress_text()}")
             self._next_line = percent // 10 * 10 + 10
 
     def note(self, mark: str, detail: str) -> None:
@@ -205,11 +214,11 @@ class Step:
         text = f"{self.percent}%"
         if 0 < self.percent < 100:
             left = (time.monotonic() - self._progress_start) * (100 - self.percent) / self.percent
-            text += f" · ~{rough(left)} left ({datetime.now() + timedelta(seconds=left):%H:%M})"
+            text += " · " + t("ui.left", left=rough(left), at=f"{datetime.now() + timedelta(seconds=left):%H:%M}")
         return text
 
     def _live_segments(self, spinner: str) -> list[tuple[str, tuple[str, ...]]]:
-        segments = [(spinner, (CYAN,)), (f" {self.label:<{LABEL_WIDTH}} ", ())]
+        segments = [(spinner, (CYAN,)), (f" {self.label:<{label_width()}} ", ())]
         if self.percent is None:
             return segments + [(f"{self.detail:<{DETAIL_WIDTH}} ", ()), (duration(self.elapsed), (DIM,))]
         filled = round(self.percent * BAR_WIDTH / 100)

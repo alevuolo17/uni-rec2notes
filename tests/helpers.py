@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rec2notes import cli, paths
+from rec2notes import cli, i18n, paths
 
 TESTS = Path(__file__).resolve().parent
 FAKES = TESTS / "fakes"
@@ -37,6 +37,7 @@ class Sandbox(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="rec2notes-test-"))
         self.addCleanup(shutil.rmtree, self.tmp)
+        self.addCleanup(i18n.set_language, "en")  # a run that chose Italian must not leak it into the next test
         self.home = self.tmp / "home"
         env = mock.patch.dict(os.environ, {
             "HOME": str(self.home),
@@ -52,7 +53,7 @@ class Sandbox(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         for var in ("REC2NOTES_AGENT", "REC2NOTES_MODEL", "REC2NOTES_EFFORT", "REC2NOTES_CLAUDE_MODEL",
-                    "REC2NOTES_WHISPER_MODEL", "FAKE_CLAUDE_MODE", "FAKE_AGY_MODE",
+                    "REC2NOTES_WHISPER_MODEL", "REC2NOTES_LANGUAGE", "FAKE_CLAUDE_MODE", "FAKE_AGY_MODE",
                     "FORCE_COLOR"):  # FORCE_COLOR makes argparse colour the usage on Python 3.14
             os.environ.pop(var, None)
         for agent in ("claude", "agy"):

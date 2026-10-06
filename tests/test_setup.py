@@ -80,7 +80,7 @@ class FoldersFile(Sandbox):
         paths.folders_file().unlink()
         with contextlib.redirect_stdout(io.StringIO()) as out:
             setup.ensure_folders_file()
-            self.assertIn("Add your courses: run `rec2notes`, then 3 Courses.", out.getvalue())
+            self.assertIn("Add your courses: run `rec2notes` → 3 Courses.", out.getvalue())
             self.assertIn("# net = ''  # Reti di calcolatori", paths.folders_file().read_text(encoding="utf-8"))
             self.write_folders('net = "Reti"\n')
             setup.ensure_folders_file()
@@ -373,6 +373,7 @@ class QuestionsMixin:
         self.steps = {name: self.patch(name) for name in ("clone", "download_models", "build", "install_prebuilt")}
         self.patch("interactive", return_value=True)
         self.patch("check_not_elevated")  # os.geteuid doesn't exist on Windows; Elevated tests it
+        os.environ["REC2NOTES_LANGUAGE"] = "en"  # an explicit language asks no question; the language tests unset it
         windows = mock.patch.object(paths, "WINDOWS", self.windows)
         windows.start()
         self.addCleanup(windows.stop)
@@ -388,6 +389,52 @@ class QuestionsMixin:
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             code = setup.main(list(args))
         return code, out.getvalue(), [call.args[0] for call in asked.call_args_list]
+
+    def test_the_language_is_asked_first_even_with_options(self):
+        del os.environ["REC2NOTES_LANGUAGE"]
+        code, out, asked = self.setup("--agent", "claude", "--backend", "cpu", "--whisper-model", "large-v3", answers=["2"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(asked, ["Choose 1-2 [1]: "])
+        self.assertIn("Language / Lingua", out)
+        self.assertIn("Setup completato.", out)
+        self.assertEqual(paths.saved_settings()["language"], "it")
+
+    def test_enter_picks_english_on_the_first_run_and_the_saved_language_on_a_rerun(self):
+        del os.environ["REC2NOTES_LANGUAGE"]
+        args = ("--agent", "claude", "--backend", "cpu", "--whisper-model", "large-v3")
+        code, out, _ = self.setup(*args, answers=[""])
+        self.assertIn("Setup complete.", out)
+        self.assertEqual(paths.saved_settings()["language"], "en")
+        self.setup(*args, answers=["2"])
+        code, out, asked = self.setup(*args, answers=[""])
+        self.assertEqual(asked, ["Scegli 1-2 [2]: "])  # the question is in the saved language, which Enter keeps
+        self.assertIn("Setup completato.", out)
+
+    def test_the_language_flag_and_variable_ask_nothing(self):
+        del os.environ["REC2NOTES_LANGUAGE"]
+        code, out, asked = self.setup("--language", "it", answers=["", "", "", ""])
+        self.assertEqual(asked[0], "Installare rec2notes su questo computer? [S/n] ")
+        self.assertNotIn("Language / Lingua", out)
+        self.assertEqual(paths.saved_settings()["language"], "it")
+        os.environ["REC2NOTES_LANGUAGE"] = "en"
+        code, out, asked = self.setup(answers=["", "", "", ""])
+        self.assertEqual(asked[0], "Install rec2notes on this computer? [Y/n] ")
+        self.assertEqual(paths.saved_settings()["language"], "en")
+
+    def test_without_a_terminal_it_is_english_and_says_so_and_saves_nothing(self):
+        del os.environ["REC2NOTES_LANGUAGE"]
+        self.patch("interactive", return_value=False)
+        code, out, asked = self.setup(answers=[])
+        self.assertEqual(code, 0, out)
+        self.assertIn("Language: English (the default); --language it changes it.", out)
+        self.assertNotIn("language", paths.saved_settings())
+
+    def test_declining_the_install_saves_no_language(self):
+        del os.environ["REC2NOTES_LANGUAGE"]
+        code, out, _ = self.setup(answers=["2", "n"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("Non è stato installato nulla.", out)
+        self.assertNotIn("language", paths.saved_settings())
 
     def test_the_chosen_agent_is_required(self):
         os.environ["REC2NOTES_AGENT"] = "antigravity"

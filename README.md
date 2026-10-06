@@ -106,7 +106,7 @@ pipx install https://github.com/alevuolo17/uni-rec2notes/archive/refs/heads/main
 rec2notes setup
 ```
 
-`setup` asks where to keep its folder (`C:\Users\<you>\rec2notes` by default), then **cpu** or **vulkan**: pick vulkan if you have an AMD, NVIDIA or Intel graphics card. It downloads a ready-made Whisper build and the speech model; nothing is compiled.
+`setup` asks which language rec2notes speaks, **English** or **Italiano**, then where to keep its folder (`C:\Users\<you>\rec2notes` by default), then **cpu** or **vulkan**: pick vulkan if you have an AMD, NVIDIA or Intel graphics card. It downloads a ready-made Whisper build and the speech model; nothing is compiled.
 
 ### Linux
 
@@ -134,6 +134,8 @@ pipx ensurepath
 rec2notes setup
 ```
 
+`setup` first asks which language rec2notes speaks, **English** or **Italiano**, then where to keep its folder and which backend and model to use. **4 Settings** → **l** changes the language later.
+
 ### Check it
 
 ```sh
@@ -145,7 +147,7 @@ rec2notes doctor
 
 Type `rec2notes` in a terminal. A menu opens; type a number or letter and press Enter:
 
-```text
+```menu
   1  Run: complete a note, or create one, from a recording
   2  Doctor: check that everything is set up
   3  Courses: list them, add your own
@@ -155,7 +157,7 @@ Type `rec2notes` in a terminal. A menu opens; type a number or letter and press 
 
 Wherever it asks for a file, you can type the path, paste it, or drag the file into the terminal.
 
-**4 Settings** saves the defaults every run starts from: the agent (Claude Code or Antigravity), its model, the effort and the Whisper model, among the ones you downloaded. Claude's models are Claude Code's default, opus, sonnet or haiku, and its effort goes from low to max (higher is slower and more thorough). Antigravity's are the ones your account has, as `agy models` lists them; their names carry the effort (`-high`, `-low`), so there is no Effort row. Before you start a run, **c** changes any of these for that run only.
+**4 Settings** saves the defaults every run starts from: the agent (Claude Code or Antigravity), its model, the effort, the Whisper model, among the ones you downloaded, and the language of rec2notes' screens (**l**: English or Italiano; the notes the agent writes are not affected). Claude's models are Claude Code's default, opus, sonnet or haiku, and its effort goes from low to max (higher is slower and more thorough). Antigravity's are the ones your account has, as `agy models` lists them; their names carry the effort (`-high`, `-low`), so there is no Effort row. Before you start a run, **c** changes any of these for that run only.
 
 ### First time: add your course
 
@@ -196,7 +198,7 @@ Everything the menu does is also a command, for scripts or if you prefer typing:
 | `rec2notes clean NOTE` | Only tidy a raw note into `<note> (pulito).md`. |
 | `rec2notes course add\|edit\|list` | Manage your courses and their note folders. |
 | `rec2notes doctor` | Check the setup; its first line is your version (also `rec2notes --version`). |
-| `rec2notes setup` | Install or change Whisper (backend, model). Safe to rerun: it keeps your backend unless you pick another. |
+| `rec2notes setup` | Install or change Whisper (backend, model) and pick the language (`--language en` or `it`, which skips the question). Safe to rerun: it keeps your backend unless you pick another. |
 | `rec2notes uninstall` | Delete rec2notes' folder; then `pipx uninstall uni-rec2notes`. |
 
 Every run also takes `--course`, `--whisper-model`, `--agent`, `--model` and `--effort`; `rec2notes -h` lists them. A flag wins over `$REC2NOTES_WHISPER_MODEL`, `$REC2NOTES_AGENT`, `$REC2NOTES_MODEL` and `$REC2NOTES_EFFORT`, which win over the defaults saved in Settings. `--effort` is Claude's: Antigravity's model names carry theirs.

@@ -11,9 +11,10 @@ def read(name: str) -> str:
 
 
 def commands(text: str) -> list[list[str]]:
-    """Each code block but the diagrams, without its comments: what must stay the same in every language."""
+    """Each code block but the diagrams and the menu screens (```menu: they show the menu in the README's own
+    language), without its comments: what must stay the same in every language."""
     return [[line for line in body.splitlines() if not line.lstrip().startswith("#")]
-            for lang, body in FENCE.findall(text) if lang != "mermaid"]
+            for lang, body in FENCE.findall(text) if lang not in ("mermaid", "menu")]
 
 
 def outline(text: str) -> list:

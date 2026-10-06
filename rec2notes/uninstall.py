@@ -10,29 +10,22 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import Abort, paths
+from . import Abort, i18n, paths
+from .i18n import t
 
-ENTRIES = {  # what rec2notes creates in its folder
-    "courses.toml": "your courses",
-    "folders.toml": "each course's vault folder on this computer",
-    "settings.toml": "your default agent, models, effort and Whisper model",
-    "whisper.cpp": "whisper.cpp and the Whisper models",
-    "cache": "cached transcripts and past runs",
-}
+ENTRIES = ("courses.toml", "folders.toml", "settings.toml", "whisper.cpp", "cache")  # what rec2notes creates in its folder
 PIPX_UNINSTALL = "pipx uninstall uni-rec2notes"
 
 
 def main(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="rec2notes uninstall",
-                            description="Delete your rec2notes folder's contents and the pointer to it, after asking. "
-                                        "Your notes are never touched.").parse_args(argv)
+    argparse.ArgumentParser(prog="rec2notes uninstall", description=t("uninstall.description")).parse_args(argv)
     try:
         return run()
     except Abort as e:
         print(f"rec2notes: {e}", file=sys.stderr)
         return 1
     except (KeyboardInterrupt, EOFError) as e:
-        print(f"\nrec2notes: {'interrupted' if isinstance(e, KeyboardInterrupt) else 'no answer'}, nothing deleted",
+        print("\nrec2notes: " + t("uninstall.interrupted" if isinstance(e, KeyboardInterrupt) else "uninstall.no_answer"),
               file=sys.stderr)
         return 130 if isinstance(e, KeyboardInterrupt) else 1
 
@@ -40,30 +33,30 @@ def main(argv: list[str]) -> int:
 def run() -> int:
     pointer = paths.pointer_file()
     folder = paths.pointed_folder()
-    doomed = [(folder / name, what) for name, what in ENTRIES.items() if (folder / name).exists()] if folder else []
+    doomed = [(folder / name, t(f"uninstall.entry.{name}")) for name in ENTRIES if (folder / name).exists()] if folder else []
     if pointer.exists():
-        doomed.append((pointer, "where your rec2notes folder is"))
+        doomed.append((pointer, t("uninstall.entry.pointer")))
     if not doomed:
-        print("No rec2notes folder or pointer on this computer.")
+        print(t("uninstall.nothing"))
     else:
         if folder and not folder.is_dir():
-            print(f"Your rec2notes folder {folder} is already gone.")
-        print("This deletes:")
+            print(t("uninstall.already_gone", folder=folder))
+        print(t("uninstall.deletes"))
         width = max(len(str(path)) for path, _ in doomed)
         for path, what in doomed:
             print(f"  {str(path):<{width}}  {what}")
-        print("Your notes and their '(completo)' files are not touched.")
-        if input("Delete them? [y/N] ").strip().lower() not in ("y", "yes"):
-            print("Nothing deleted.")
+        print(t("uninstall.notes_safe"))
+        if input(t("uninstall.ask")).strip().lower() not in i18n.YES:
+            print(t("uninstall.nothing_deleted"))
             return 0
         for path, _ in doomed:
             _delete(path)
         for emptied in (folder, pointer.parent):
             _remove_if_empty(emptied)
         if folder and folder.is_dir():
-            print(f"Kept {folder}: it holds files rec2notes didn't make.")
-        print("Deleted.")
-    print(f"To remove the rec2notes command too, run: {PIPX_UNINSTALL}")
+            print(t("uninstall.kept", folder=folder))
+        print(t("uninstall.deleted"))
+    print(t("uninstall.remove_command", command=PIPX_UNINSTALL))
     return 0
 
 
@@ -74,7 +67,7 @@ def _delete(path: Path) -> None:
         else:
             path.unlink()
     except OSError as e:
-        raise Abort(f"could not delete {e.filename or path}: {e.strerror}") from None
+        raise Abort(t("uninstall.cannot_delete", name=e.filename or path, reason=e.strerror)) from None
 
 
 def _remove_if_empty(folder: Path | None) -> None:

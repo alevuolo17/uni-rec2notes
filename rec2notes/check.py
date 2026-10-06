@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+from .i18n import t
+
 FOOTNOTE_DEFINITION = re.compile(r"^\[\^[^\]\s]+\]:")
 FOOTNOTE_REFERENCE = re.compile(r"\[\^[^\]\s]+\]")
 WORD = re.compile(r"\w+")
@@ -50,8 +52,8 @@ def missing_passages(note: str, reply: str) -> list[Change]:
 
 def describe(change: Change, width: int | None = None) -> str:
     if change.reply:
-        return f"«{_clip(change.note, width)}» became «{_clip(change.reply, width)}»"
-    return f"«{_clip(change.note, width)}» is missing"
+        return t("check.became", note=_clip(change.note, width), reply=_clip(change.reply, width))
+    return t("check.is_missing", note=_clip(change.note, width))
 
 
 def summary(reply: str) -> tuple[int, bool]:
@@ -62,14 +64,15 @@ def summary(reply: str) -> tuple[int, bool]:
 
 
 def report(changes: list[Change], conflicts: int, missed: bool) -> str:
-    lines = [f"Conflict footnotes: {conflicts}", f"Missed-topics section: {'yes' if missed else 'no'}", ""]
+    lines = [t("check.conflicts", n=conflicts), t("check.missed", answer=t("yes" if missed else "no")), ""]
     if not changes:
-        lines.append("Only-additions check: passed. Every word of the note appears, in order, in the reply.")
+        lines.append(t("check.passed"))
     else:
-        lines.append(f"Only-additions check: {len(changes)} passage(s) of the note are missing or changed in the reply")
-        lines.append("(footnote references and definitions are ignored on both sides).")
+        lines.append(t("check.failed", n=len(changes)))
+        lines.append(t("check.footnotes_ignored"))
         for n, change in enumerate(changes, 1):
-            lines += ["", f"{n}. note:  «{change.note}»", f"   reply: «{change.reply}»" if change.reply else "   reply: (nothing)"]
+            lines += ["", t("check.item_note", n=n, note=change.note),
+                      t("check.item_reply", reply=change.reply) if change.reply else t("check.item_nothing")]
     return "\n".join(lines) + "\n"
 
 

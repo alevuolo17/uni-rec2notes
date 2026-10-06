@@ -11,6 +11,8 @@ import contextlib
 import signal
 import subprocess
 
+from .i18n import t
+
 SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, name))
 
 _received: list[int] = []
@@ -22,7 +24,8 @@ class Stopped(Exception):
         super().__init__(signum)
         self.signum = signum
         self.status = 128 + signum
-        self.message = "interrupted" if signum == signal.SIGINT else f"stopped by {signal.Signals(signum).name}"
+        self.message = (t("stopping.interrupted") if signum == signal.SIGINT
+                        else t("stopping.stopped_by", name=signal.Signals(signum).name))
 
 
 @contextlib.contextmanager

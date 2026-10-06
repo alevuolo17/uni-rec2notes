@@ -10,9 +10,8 @@ import subprocess
 from pathlib import Path
 
 from . import Abort, version, courses, merge, paths, transcribe, ui
+from .i18n import t
 
-PACKAGES_HINT = "install it with your package manager (the README lists the packages)"
-COURSES = "`rec2notes` → 3 Courses"  # where courses and their folders are set
 AUTH_TIMEOUT = 20  # seconds; `claude auth status` may reach the network
 
 
@@ -20,13 +19,13 @@ def run(console: ui.Console) -> int:
     """Print the checklist; 1 if anything failed (warnings don't count), else 0."""
     agent = paths.setting_choice("agent")
     if agent not in merge.AGENTS:
-        agents = [("fail", "Agent", f"unknown agent {agent!r}", f"use one of {', '.join(merge.AGENTS)}")]
+        agents = [("fail", t("doctor.row.agent"), t("doctor.unknown_agent", agent=agent), t("doctor.use_one_of", names=", ".join(merge.AGENTS)))]
     else:
         agents = [agent_installed(agent), agent_logged_in(agent)]
     results = [("ok", "rec2notes", version(), None), *agents, ffmpeg(), rec2notes_folder()]
     if results[-1][0] == "ok":  # the rest lives in the folder
         results += [whisper_cli(), *models(paths.whisper_model_choice()), *folders()]
-    width = max(ui.LABEL_WIDTH, *(len(label) for _, label, _, _ in results))
+    width = max(ui.label_width(), *(len(label) for _, label, _, _ in results))
     console.line()
     for mark, label, detail, fix in results:
         console.mark(mark, label, detail, width=width)
@@ -36,10 +35,11 @@ def run(console: ui.Console) -> int:
     warned = sum(r[0] == "warn" for r in results)
     console.line()
     if failed:
-        console.line(f"{failed} problem{'s' if failed > 1 else ''} to fix" + (f", {warned} to look at" if warned else "") + ".")
-        console.line("Fix the items above, then run `rec2notes doctor` again.")
+        console.line(t("doctor.problems" if failed > 1 else "doctor.problem", n=failed)
+                     + (", " + t("doctor.to_look_at", n=warned) if warned else "") + ".")
+        console.line(t("doctor.fix_then_rerun"))
     else:
-        console.line("Everything needed is in place." if not warned else f"Ready to run; {warned} to look at.")
+        console.line(t("doctor.all_in_place") if not warned else t("doctor.ready", n=warned))
     return 1 if failed else 0
 
 
@@ -50,21 +50,21 @@ def start_problems(agent: str, agent_model: str | None, model: str, caches: list
     problems = []
     program, label = merge.AGENTS[agent].program, merge.AGENTS[agent].label
     if not shutil.which(program):
-        problems.append(f"{program} ({label}) is not on PATH")
+        problems.append(t("doctor.not_on_path", program=program, label=label))
     elif agent == "antigravity":
         try:
             if agent_model not in (models := merge.antigravity_models()):
-                problems.append(f"Antigravity has no model {agent_model!r}; yours: {', '.join(models)}")
+                problems.append(t("doctor.no_such_model", model=agent_model, names=", ".join(models)))
         except Abort as e:
             problems.append(str(e))
     if not all(c.exists() for c in caches):
         if not shutil.which("ffmpeg"):
-            problems.append("ffmpeg is not installed")
+            problems.append(t("doctor.ffmpeg_missing"))
         if not transcribe.whisper_cli():
-            problems.append(f"whisper-cli is not built; run {paths.SETUP}")
+            problems.append(t("doctor.whisper_cli_unbuilt", setup=paths.SETUP))
         for model_file in (paths.whisper_model(model), paths.vad_model()):
             if not model_file.exists():
-                problems.append(f"{model_file} is missing; run {paths.SETUP} --whisper-model {model}")
+                problems.append(t("doctor.model_file_missing", file=model_file, setup=paths.SETUP, model=model))
     return problems
 
 
@@ -73,79 +73,80 @@ def agent_installed(agent: str) -> tuple:
     found = shutil.which(program)
     if found:
         return "ok", label, found, None
-    return "fail", label, "not on PATH", merge.AGENTS[agent].install_hint()
+    return "fail", label, t("doctor.not_on_path_short"), merge.AGENTS[agent].install_hint()
 
 
 def agent_logged_in(agent: str) -> tuple:
     program, label = merge.AGENTS[agent].program, merge.AGENTS[agent].label
     if not shutil.which(program):
-        return "warn", f"{label} login", f"not checked: {label} is missing", None
+        return "warn", t("doctor.row.login", label=label), t("doctor.not_checked", label=label), None
     if agent == "antigravity":
         try:
             merge.antigravity_models()  # lists the account's models: no prompt is sent
         except Abort as e:
-            return "fail", f"{label} login", str(e), None  # the message says what to do
-        return "ok", f"{label} login", "signed in", None
+            return "fail", t("doctor.row.login", label=label), str(e), None  # the message says what to do
+        return "ok", t("doctor.row.login", label=label), t("doctor.signed_in"), None
     return claude_logged_in()
 
 
 def claude_logged_in() -> tuple:
+    login = t("doctor.row.login", label=merge.AGENTS["claude"].label)
     try:
         status = subprocess.run([paths.program("claude"), "auth", "status"], capture_output=True, timeout=AUTH_TIMEOUT).returncode
     except (OSError, subprocess.TimeoutExpired):
-        return "warn", "Claude Code login", "could not check", "run `claude auth status` yourself"
+        return "warn", login, t("doctor.could_not_check"), t("doctor.run_auth_status")
     if status == 0:
-        return "ok", "Claude Code login", "logged in", None
-    return "fail", "Claude Code login", "not logged in", "run `claude auth login`"
+        return "ok", login, t("doctor.logged_in"), None
+    return "fail", login, t("doctor.not_logged_in"), t("doctor.run_auth_login")
 
 
 def ffmpeg() -> tuple:
     if shutil.which("ffmpeg"):
         return "ok", "ffmpeg", shutil.which("ffmpeg"), None
-    return "fail", "ffmpeg", "not installed", PACKAGES_HINT
+    return "fail", "ffmpeg", t("doctor.not_installed"), t("doctor.packages_hint")
 
 
 def rec2notes_folder() -> tuple:
     try:
-        return "ok", "rec2notes folder", str(paths.folder()), None
+        return "ok", t("doctor.row.folder"), str(paths.folder()), None
     except Abort as e:
-        return "fail", "rec2notes folder", str(e), None  # the message says what to do
+        return "fail", t("doctor.row.folder"), str(e), None  # the message says what to do
 
 
 def whisper_cli() -> tuple:
     found = transcribe.whisper_cli()
     if found:
         return "ok", "whisper-cli", found, None
-    return "fail", "whisper-cli", "not built", f"run {paths.SETUP}"
+    return "fail", "whisper-cli", t("doctor.not_built"), t("doctor.run", setup=paths.SETUP)
 
 
 def models(model: str) -> list[tuple]:
     results = []
-    for label, name, file in (("Whisper model", model, paths.whisper_model(model)),
-                              ("VAD model", paths.VAD_MODEL, paths.vad_model())):
+    for label, name, file in ((t("doctor.row.whisper_model"), model, paths.whisper_model(model)),
+                              (t("doctor.row.vad_model"), paths.VAD_MODEL, paths.vad_model())):
         if file.exists():
             results.append(("ok", label, name, None))
         else:
-            results.append(("fail", label, f"{name} is missing", f"run {paths.SETUP} --whisper-model {model}"))
+            results.append(("fail", label, t("doctor.is_missing", name=name), t("doctor.run_model", setup=paths.SETUP, model=model)))
     return results
 
 
 def folders() -> list[tuple]:
     path = paths.folders_file()
     if not path.exists():
-        return [("fail", "Folders", f"{path} does not exist", f"run {paths.SETUP} to create it")]
+        return [("fail", t("doctor.row.folders"), t("doctor.does_not_exist", path=path), t("doctor.run_to_create", setup=paths.SETUP))]
     try:
         all_courses = courses.load_courses()
         configured = courses.read_folders(all_courses)
     except Abort as e:
-        return [("fail", "Folders", str(e), f"fix {path}")]
+        return [("fail", t("doctor.row.folders"), str(e), t("doctor.fix", path=path))]
     if not configured:
-        return [("fail", "Folders", "no course has a folder", f"add your courses, or set their folders, in {COURSES}")]
+        return [("fail", t("doctor.row.folders"), t("doctor.no_course_folder"), t("doctor.add_courses", courses=t("path.courses")))]
     results = []
     for slug, course in all_courses.items():
         folder = configured.get(slug)
         if folder is None:
-            results.append(("warn", course.name, "no folder set", f"set it in {COURSES} → e, or pass --course {slug}"))
+            results.append(("warn", course.name, t("doctor.no_folder_set"), t("doctor.set_it", courses=t("path.courses"), slug=slug)))
         else:
             results.append(folder_row(slug, course.name, folder, configured, all_courses, path))
     return results
@@ -159,21 +160,20 @@ def folder_row(slug: str, name: str, folder: str, configured: dict[str, str], al
     same = [o for o, f in others.items() if courses.contains(mine, f) and courses.contains(f, mine)]
     inside = [o for o, f in others.items() if courses.contains(mine, f) and o not in same]
     if same:  # only the outer folder is blamed: the courses inside it are fine
-        return ("fail", name, f"{folder} is also the folder of {_names(same, all_courses)}",
-                f"give each course its own folder in {path}")
+        return ("fail", name, t("doctor.same_folder", folder=folder, names=_names(same, all_courses)),
+                t("doctor.own_folder", path=path))
     if inside:
-        return ("fail", name, f"{folder} contains the folder of {_names(inside, all_courses)}",
-                f"pick a smaller folder for `{slug}`, or remove its line, in {path}")
+        return ("fail", name, t("doctor.contains_folder", folder=folder, names=_names(inside, all_courses)),
+                t("doctor.smaller_folder", slug=slug, path=path))
     if not Path(folder).is_absolute():
-        return "ok", name, f"{folder} (a folder name: not looked up)", None
+        return "ok", name, t("doctor.folder_name", folder=folder), None
     where = Path(folder)
     if not where.exists():
-        return "warn", name, f"{folder} does not exist", f"create it, or fix the line for `{slug}` in {path}"
+        return "warn", name, t("doctor.does_not_exist", path=folder), t("doctor.create_or_fix", slug=slug, path=path)
     if not where.is_dir():
-        return "warn", name, f"{folder} is not a folder", f"fix the line for `{slug}` in {path}"
+        return "warn", name, t("doctor.not_a_folder", folder=folder), t("doctor.fix_line", slug=slug, path=path)
     if not os.access(where, os.W_OK | os.X_OK):
-        return ("fail", name, f"you have no write access to {folder}",
-                f"runs write the finished note next to the note: fix the permissions, or pick another folder in {path}")
+        return ("fail", name, t("doctor.no_write", folder=folder), t("doctor.fix_permissions", path=path))
     return "ok", name, folder, None
 
 

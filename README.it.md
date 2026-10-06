@@ -82,7 +82,7 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 
 Poi apri un nuovo terminale, avvia `agy` una volta, accedi con il tuo account Google ed esci con Ctrl+C. La sua prima esecuzione in rec2notes dice cosa va a Google e chiede prima di inviare qualsiasi cosa: leggi [Privacy e sicurezza](#privacy-e-sicurezza).
 
-Per cambiare agente in seguito: `rec2notes` → **4 Settings** → **a**; una singola esecuzione può sceglierlo con `--agent claude` o `--agent antigravity`.
+Per cambiare agente in seguito: `rec2notes` → **4 Impostazioni** → **a**; una singola esecuzione può sceglierlo con `--agent claude` o `--agent antigravity`.
 
 ### Windows 11
 
@@ -106,7 +106,7 @@ pipx install https://github.com/alevuolo17/uni-rec2notes/archive/refs/heads/main
 rec2notes setup
 ```
 
-`setup` chiede dove tenere la sua cartella (di default `C:\Users\<tuo-utente>\rec2notes`), poi **cpu** o **vulkan**: scegli vulkan se hai una scheda video AMD, NVIDIA o Intel. Scarica una build di Whisper già pronta e il modello vocale; non si compila niente.
+`setup` chiede in che lingua parla rec2notes, **English** o **Italiano**, poi dove tenere la sua cartella (di default `C:\Users\<tuo-utente>\rec2notes`), poi **cpu** o **vulkan**: scegli vulkan se hai una scheda video AMD, NVIDIA o Intel. Scarica una build di Whisper già pronta e il modello vocale; non si compila niente.
 
 ### Linux
 
@@ -134,6 +134,8 @@ pipx ensurepath
 rec2notes setup
 ```
 
+`setup` chiede prima in che lingua parla rec2notes, **English** o **Italiano**, poi dove tenere la sua cartella e quale backend e modello usare. **4 Impostazioni** → **l** cambia la lingua in seguito.
+
 ### Verifica
 
 ```sh
@@ -143,19 +145,19 @@ rec2notes doctor
 
 ## Uso
 
-Scrivi `rec2notes` in un terminale. Si apre un menu (in inglese); scrivi un numero o una lettera e premi Invio:
+Scrivi `rec2notes` in un terminale. Si apre un menu, nella lingua che hai scelto in `setup`; scrivi un numero o una lettera e premi Invio:
 
-```text
-  1  Run: complete a note, or create one, from a recording
-  2  Doctor: check that everything is set up
-  3  Courses: list them, add your own
-  4  Settings: your rec2notes folder, agent, model, effort and Whisper
-  q  Quit
+```menu
+  1  Esegui: completa degli appunti, o creane di nuovi, da una registrazione
+  2  Doctor: controlla che sia tutto configurato
+  3  Corsi: elencali, aggiungi i tuoi
+  4  Impostazioni: la tua cartella rec2notes, agente, modello, effort e Whisper
+  q  Esci
 ```
 
 Quando ti chiede un file, puoi scriverne il percorso, incollarlo o trascinare il file nel terminale.
 
-**4 Settings** salva i valori di default da cui parte ogni esecuzione: l'agente (Claude Code o Antigravity), il suo modello, l'effort e il modello Whisper, tra quelli che hai scaricato. I modelli di Claude sono quello di default di Claude Code, opus, sonnet o haiku, e il suo effort va da low a max (più alto è più lento e accurato). Quelli di Antigravity sono quelli del tuo account, come li elenca `agy models`; il loro nome contiene l'effort (`-high`, `-low`), quindi non c'è la riga Effort. Prima di avviare un'esecuzione, **c** cambia uno di questi solo per quell'esecuzione.
+**4 Impostazioni** salva i valori di default da cui parte ogni esecuzione: l'agente (Claude Code o Antigravity), il suo modello, l'effort, il modello Whisper, tra quelli che hai scaricato, e la lingua delle schermate di rec2notes (**l**: English o Italiano; gli appunti scritti dall'agente non cambiano). I modelli di Claude sono quello di default di Claude Code, opus, sonnet o haiku, e il suo effort va da low a max (più alto è più lento e accurato). Quelli di Antigravity sono quelli del tuo account, come li elenca `agy models`; il loro nome contiene l'effort (`-high`, `-low`), quindi non c'è la riga Effort. Prima di avviare un'esecuzione, **c** cambia uno di questi solo per quell'esecuzione.
 
 ### La prima volta: aggiungi il tuo corso
 
@@ -171,10 +173,10 @@ Infine, la cartella che contiene gli appunti del corso. Quando gli appunti sono 
 
 **1 → 1**, poi:
 
-1. **Note**: gli appunti che hai preso a lezione.
-2. **Clean the note first?** (pulire prima gli appunti?) Invio per no. Rispondi `y` se sono ancora grezzi: rec2notes li riordina in `<appunti> (pulito).md` e completa quella copia.
-3. **Recording**: l'audio della lezione. Se è stato registrato in più parti, dai la parte successiva quando te la chiede, in ordine; Invio quando non ce ne sono altre.
-4. **Which course is this?** (di quale corso è?) Se gli appunti sono nella cartella di uno dei tuoi corsi, quel corso è già segnato e Invio lo sceglie.
+1. **Appunti (.md)**: gli appunti che hai preso a lezione.
+2. **Pulire prima gli appunti?** Invio per no. Rispondi `s` se sono ancora grezzi: rec2notes li riordina in `<appunti> (pulito).md` e completa quella copia.
+3. **Registrazione**: l'audio della lezione. Se è stato registrato in più parti, dai la parte successiva quando te la chiede, in ordine; Invio quando non ce ne sono altre.
+4. **Di quale corso si tratta?** Se gli appunti sono nella cartella di uno dei tuoi corsi, quel corso è già segnato e Invio lo sceglie.
 5. **Un riepilogo**: corso, appunti, registrazione, e l'agente con il suo modello ed effort, e il modello Whisper. Invio avvia; `c` cambia modelli ed effort per questa esecuzione. Tutto ciò che fermerebbe l'esecuzione, come un modello Whisper non scaricato, è elencato qui, prima che parta.
 
 Ottieni `<appunti> (completo).md` accanto ai tuoi appunti. Cerca le note `[^conflitto-N]`, dove i tuoi appunti e la lezione non coincidono, e la sezione *Argomenti non presenti negli appunti* in fondo. Se qualche tua parola è andata persa, il terminale le elenca; un `[?]` completato è normale che compaia lì.
@@ -196,10 +198,10 @@ Tutto ciò che fa il menu è anche un comando, per gli script o se preferisci sc
 | `rec2notes clean NOTE` | Riordina soltanto degli appunti grezzi in `<appunti> (pulito).md`. |
 | `rec2notes course add\|edit\|list` | Gestisce i tuoi corsi e le loro cartelle di appunti. |
 | `rec2notes doctor` | Controlla l'installazione; la prima riga è la tua versione (anche `rec2notes --version`). |
-| `rec2notes setup` | Installa o cambia Whisper (backend, modello). Si può rilanciare: tiene il tuo backend a meno che tu non ne scelga un altro. |
+| `rec2notes setup` | Installa o cambia Whisper (backend, modello) e sceglie la lingua (`--language en` o `it`, che salta la domanda). Si può rilanciare: tiene il tuo backend a meno che tu non ne scelga un altro. |
 | `rec2notes uninstall` | Cancella la cartella di rec2notes; poi `pipx uninstall uni-rec2notes`. |
 
-Ogni esecuzione accetta anche `--course`, `--whisper-model`, `--agent`, `--model` e `--effort`; `rec2notes -h` li elenca. Un'opzione vince su `$REC2NOTES_WHISPER_MODEL`, `$REC2NOTES_AGENT`, `$REC2NOTES_MODEL` e `$REC2NOTES_EFFORT`, che vincono sui valori di default salvati in Settings. `--effort` è di Claude: i nomi dei modelli di Antigravity contengono il loro.
+Ogni esecuzione accetta anche `--course`, `--whisper-model`, `--agent`, `--model` e `--effort`; `rec2notes -h` li elenca. Un'opzione vince su `$REC2NOTES_WHISPER_MODEL`, `$REC2NOTES_AGENT`, `$REC2NOTES_MODEL` e `$REC2NOTES_EFFORT`, che vincono sui valori di default salvati in Impostazioni. `--effort` è di Claude: i nomi dei modelli di Antigravity contengono il loro.
 </details>
 
 ## Privacy e sicurezza
