@@ -50,8 +50,9 @@ You need a Windows 11 or Linux PC and the command-line tool of an AI agent, **Cl
 
 Pick one and install it before rec2notes; with both installed, `rec2notes setup` asks which to use.
 
-- **Claude Code** needs a Claude subscription (Pro or higher).
-- **Antigravity**, Google's agent, needs a Google account; students may get it free with a Google plan, so check your university's offer.
+#### Claude Code
+
+Needs a Claude subscription (Pro or higher).
 
 ```powershell
 # Windows: install Claude Code, then log in with your Claude account
@@ -65,6 +66,10 @@ curl -fsSL https://claude.ai/install.sh | bash
 claude auth login
 ```
 
+#### Antigravity
+
+Google's agent; needs a Google account. Students may get it free with a Google plan, so check your university's offer.
+
 ```powershell
 # Windows: install Antigravity's command-line tool, `agy`
 irm https://antigravity.google/cli/install.ps1 | iex
@@ -75,7 +80,9 @@ irm https://antigravity.google/cli/install.ps1 | iex
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 ```
 
-For Antigravity, open a new terminal, run `agy` once, sign in with your Google account and quit with Ctrl+C. Its first run in rec2notes says what goes to Google and asks before sending anything: read [Privacy and security](#privacy-and-security). To switch agents later: `rec2notes` → **4 Settings** → **a**; a single run can pick with `--agent claude` or `--agent antigravity`.
+Then open a new terminal, run `agy` once, sign in with your Google account and quit with Ctrl+C. Its first run in rec2notes says what goes to Google and asks before sending anything: read [Privacy and security](#privacy-and-security).
+
+To switch agents later: `rec2notes` → **4 Settings** → **a**; a single run can pick with `--agent claude` or `--agent antigravity`.
 
 ### Windows 11
 

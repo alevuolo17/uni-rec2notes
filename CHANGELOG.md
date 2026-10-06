@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2 (2026-10-06)
+
+- readme: split the agent install by agent, then by OS
+
 ## 0.3.1 (2026-10-06)
 
 - readme: install the AI agent first, for Claude Code and Antigravity alike
