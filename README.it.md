@@ -44,7 +44,38 @@ flowchart LR
 
 ## Installazione
 
-Ti servono lo strumento da riga di comando di un agente AI, **Claude Code** con un abbonamento Claude (Pro o superiore) oppure **Antigravity** con un account Google, e un PC con Windows 11 o Linux. Per Antigravity, segui prima [Antigravity al posto di Claude Code](#antigravity-al-posto-di-claude-code) e salta le righe di Claude Code qui sotto. La GPU è facoltativa, ma rende la trascrizione molto più veloce.
+Ti servono un PC con Windows 11 o Linux e lo strumento da riga di comando di un agente AI, **Claude Code** o **Antigravity**. La GPU è facoltativa, ma rende la trascrizione molto più veloce.
+
+### Un agente AI
+
+Scegline uno e installalo prima di rec2notes; con entrambi installati, `rec2notes setup` chiede quale usare.
+
+- **Claude Code** richiede un abbonamento Claude (Pro o superiore).
+- **Antigravity**, l'agente di Google, richiede un account Google; gli studenti possono averlo gratis con un piano Google, quindi controlla l'offerta della tua università.
+
+```powershell
+# Windows: installa Claude Code, poi accedi con il tuo account Claude
+irm https://claude.ai/install.ps1 | iex
+claude auth login
+```
+
+```sh
+# Linux: installa Claude Code, poi accedi con il tuo account Claude
+curl -fsSL https://claude.ai/install.sh | bash
+claude auth login
+```
+
+```powershell
+# Windows: installa lo strumento da riga di comando di Antigravity, `agy`
+irm https://antigravity.google/cli/install.ps1 | iex
+```
+
+```sh
+# Linux: installa lo strumento da riga di comando di Antigravity, `agy`
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+```
+
+Per Antigravity, apri un nuovo terminale, avvia `agy` una volta, accedi con il tuo account Google ed esci con Ctrl+C. La sua prima esecuzione in rec2notes dice cosa va a Google e chiede prima di inviare qualsiasi cosa: leggi [Privacy e sicurezza](#privacy-e-sicurezza). Per cambiare agente in seguito: `rec2notes` → **4 Settings** → **a**; una singola esecuzione può sceglierlo con `--agent claude` o `--agent antigravity`.
 
 ### Windows 11
 
@@ -53,10 +84,6 @@ Nel Terminale (PowerShell):
 ```powershell
 # Installa Python e FFmpeg, che converte le registrazioni
 winget install Python.Python.3.13 Gyan.FFmpeg
-# Installa Claude Code, il Claude da riga di comando che rec2notes usa
-irm https://claude.ai/install.ps1 | iex
-# Accedi a Claude Code con il tuo account Claude
-claude auth login
 # Installa pipx, che installa i programmi Python ognuno nel suo ambiente
 py -m pip install --user pipx
 # Aggiungi la cartella dei programmi di pipx al PATH, così rec2notes si avvia per nome
@@ -72,7 +99,7 @@ pipx install https://github.com/alevuolo17/uni-rec2notes/archive/refs/heads/main
 rec2notes setup
 ```
 
-`setup` chiede dove tenere la sua cartella (di default `C:\Users\<tuo-utente>\rec2notes`), quale agente usare se sono installati sia Claude Code sia Antigravity, poi **cpu** o **vulkan**: scegli vulkan se hai una scheda video AMD, NVIDIA o Intel. Scarica una build di Whisper già pronta e il modello vocale; non si compila niente.
+`setup` chiede dove tenere la sua cartella (di default `C:\Users\<tuo-utente>\rec2notes`), poi **cpu** o **vulkan**: scegli vulkan se hai una scheda video AMD, NVIDIA o Intel. Scarica una build di Whisper già pronta e il modello vocale; non si compila niente.
 
 ### Linux
 
@@ -88,7 +115,7 @@ sudo apt install -y pipx build-essential cmake git ffmpeg libvulkan-dev glslc sp
 sudo pacman -S --needed python-pipx base-devel cmake git ffmpeg vulkan-headers vulkan-icd-loader shaderc spirv-headers spirv-tools
 ```
 
-I pacchetti Vulkan servono solo per trascrivere sulla GPU; senza, la trascrizione gira sulla CPU. Poi installa [Claude Code](https://claude.com/claude-code) e accedi.
+I pacchetti Vulkan servono solo per trascrivere sulla GPU; senza, la trascrizione gira sulla CPU.
 </details>
 
 ```sh
@@ -99,22 +126,6 @@ pipx ensurepath
 # Compila Whisper in ~/rec2notes e scarica il suo modello vocale
 rec2notes setup
 ```
-
-### Antigravity al posto di Claude Code
-
-Senza un abbonamento Claude, rec2notes può usare Antigravity di Google con il suo strumento da riga di comando, `agy`; gli studenti possono averlo gratis con un piano Google, quindi controlla l'offerta della tua università. Installalo prima di `rec2notes setup`:
-
-```powershell
-# Windows: installa lo strumento da riga di comando di Antigravity
-irm https://antigravity.google/cli/install.ps1 | iex
-```
-
-```sh
-# Linux: installa lo strumento da riga di comando di Antigravity
-curl -fsSL https://antigravity.google/cli/install.sh | bash
-```
-
-Apri un nuovo terminale, avvia `agy` una volta, accedi con il tuo account Google ed esci con Ctrl+C. `rec2notes setup` a quel punto sceglie Antigravity, l'agente installato; se c'è anche Claude Code, chiede quale usare. Per cambiarlo in seguito: `rec2notes` → **4 Settings** → **a**. Scegliere Antigravity lì, o la prima esecuzione con Antigravity, dice cosa va a Google e chiede prima di inviare qualsiasi cosa: leggi [Privacy e sicurezza](#privacy-e-sicurezza). Una singola esecuzione può anche scegliere il suo agente con `--agent claude` o `--agent antigravity`.
 
 ### Verifica
 

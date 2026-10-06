@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 (2026-10-06)
+
+- readme: install the AI agent first, for Claude Code and Antigravity alike
+
 ## 0.3.0 (2026-10-06)
 
 - agents: Antigravity defaults to gemini-3.8-flash-high, no model matrix
