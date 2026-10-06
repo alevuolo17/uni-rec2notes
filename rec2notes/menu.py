@@ -6,6 +6,7 @@ None if the user quit or declined; running it is the caller's job, exactly as wi
 
 import argparse
 import os
+import shutil
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +19,11 @@ class Quit(Exception):
 
 Parse = Callable[[list[str]], argparse.Namespace]
 CLAUDE_MODELS = (None, "opus", "sonnet", "haiku")  # None: Claude Code's default; the aliases follow its latest models
+ANTIGRAVITY_NOTICE = """\
+Antigravity sends your note, the lecture's transcript and the course's name and vocab to Google, under your Google
+account's terms. On personal accounts, those terms let Google use what you send to improve its models; rec2notes
+turns Antigravity's telemetry off, but Google hasn't said that this is enough. Antigravity's web search can't be
+turned off: when the agent uses it, the run warns you."""
 
 
 def hub(console: ui.Console, ask: Callable[[str], str], parse: Parse, parse_create: Parse) -> argparse.Namespace | None:
@@ -57,7 +63,7 @@ def _options(console: ui.Console) -> None:
     console.line(f"  {console.style('1', ui.CYAN)}  Run: complete a note, or create one, from a recording")
     console.line(f"  {console.style('2', ui.CYAN)}  Doctor: check that everything is set up")
     console.line(f"  {console.style('3', ui.CYAN)}  Courses: list them, add your own")
-    console.line(f"  {console.style('4', ui.CYAN)}  Settings: your rec2notes folder, default model, effort and Whisper")
+    console.line(f"  {console.style('4', ui.CYAN)}  Settings: your rec2notes folder, agent, model, effort and Whisper")
     console.line(f"  {console.style('q', ui.CYAN)}  Quit")
     console.line()
 
@@ -113,7 +119,7 @@ def _confirm(console, ask, args: argparse.Namespace, rows: list[tuple[str, list[
         console.line()
         console.summary([*rows, *_settings_rows(args), *_transcript_rows(seconds, caches)])
         console.line()
-        problems = doctor.start_problems(args.whisper_model, caches)
+        problems = doctor.start_problems(args.agent, args.model, args.whisper_model, caches)
         if problems:
             console.line("Can't start yet:")
             for problem in problems:
@@ -127,16 +133,21 @@ def _confirm(console, ask, args: argparse.Namespace, rows: list[tuple[str, list[
             return None
         if answer != "c":
             return args
-        args.claude_model = _ask_claude_model(console, ask, args.claude_model)
-        args.effort = _ask_effort(console, ask, args.effort)
+        agent = _ask_agent(console, ask, args.agent)
+        if agent != args.agent:
+            args.agent, args.model = agent, paths.model_choice(agent)
+            args.effort = paths.setting_choice("effort") if agent == "claude" else None
+        args.model = _ask_model(console, ask, args.agent, args.model)
+        if args.agent == "claude":
+            args.effort = _ask_effort(console, ask, args.effort)
         args.whisper_model = _ask_whisper_model(console, ask, args.whisper_model) or args.whisper_model
 
 
 def _settings_rows(args: argparse.Namespace) -> list[tuple[str, list[str], tuple]]:
     return [
-        ("Agent", ["claude"], ()),
-        ("Model", [_model_name(args.claude_model)], ()),
-        ("Effort", [args.effort], ()),
+        ("Agent", [merge.AGENTS[args.agent].label], ()),
+        ("Model", [_model_name(args.model)], ()),
+        *([("Effort", [args.effort], ())] if args.effort else []),
         ("Whisper", [args.whisper_model], ()),
     ]
 
@@ -331,38 +342,100 @@ def _settings(console, ask) -> None:
             shown = f"none yet: run `{paths.SETUP}`"
         else:
             shown = str(folder) if folder.is_dir() else f"{folder} (missing: moved or deleted?)"
+        agent = paths.setting_choice("agent")
+        if agent not in merge.AGENTS:
+            raise Abort(f"unknown agent {agent!r}{_from_env('agent') or ' in settings.toml'}: "
+                        f"use one of {', '.join(merge.AGENTS)}")
+        claude = agent == "claude"
+        model_key = f"{agent}_model"
         console.line()
         console.line(f"  rec2notes folder  {shown}")
-        console.line(f"  Claude model      {_setting('claude_model', _model_name)}")
-        console.line(f"  Effort            {_setting('effort')}")
-        console.line(f"  Whisper model     {_setting('whisper_model')}")
+        console.line(f"  Agent             {merge.AGENTS[agent].label}{_from_env('agent')}")
+        console.line(f"  Model             {_model_name(paths.model_choice(agent))}"
+                     f"{_from_env('REC2NOTES_MODEL', paths.SETTING_ENV[model_key])}")
+        if claude:
+            console.line(f"  Effort            {paths.setting_choice('effort')}{_from_env('effort')}")
+        console.line(f"  Whisper model     {paths.whisper_model_choice()}{_from_env('whisper_model')}")
         console.line()
+        keys = ["a", "m", *(["e"] if claude else []), "w"]
+        names = {"a": "Agent", "m": "Model", "e": "Effort", "w": "Whisper model", "b": "Back"}
         console.line(f"  {console.style('c', ui.CYAN)}  Change the folder: point to where you moved it")
-        console.line(f"  {console.style('m', ui.CYAN)}  Claude model    {console.style('e', ui.CYAN)}  Effort    "
-                     f"{console.style('w', ui.CYAN)}  Whisper model    {console.style('b', ui.CYAN)}  Back")
+        console.line("  " + "    ".join(f"{console.style(k, ui.CYAN)}  {names[k]}" for k in [*keys, "b"]))
         choice = _ask(ask, "> ").lower()
         if choice == "b":
             return
         if choice == "c":
             _repoint(console, ask)
+        elif choice == "a":
+            paths.save_setting("agent", _ask_agent(console, ask, agent))
         elif choice == "m":
-            paths.save_setting("claude_model", _ask_claude_model(console, ask, paths.setting_choice("claude_model")))
-        elif choice == "e":
+            model = _ask_model(console, ask, agent, paths.setting_choice(model_key))
+            # the built-in Antigravity model isn't saved, so a later rec2notes' default reaches whoever kept it
+            paths.save_setting(model_key, None if model == paths.ANTIGRAVITY_MODEL else model)
+        elif choice == "e" and claude:
             paths.save_setting("effort", _ask_effort(console, ask, paths.setting_choice("effort")))
         elif choice == "w" and (model := _ask_whisper_model(console, ask, paths.whisper_model_choice())):
             paths.save_setting("whisper_model", model)
         else:
-            console.line("Type c, m, e, w or b.")
+            console.line(f"Type c, {', '.join(keys)} or b.")
 
 
-def _setting(key: str, show: Callable[[str | None], str] = str) -> str:
-    """A default as runs use it, saying when an environment variable sets it and the saved one is ignored."""
-    env = paths.SETTING_ENV[key]
-    return show(paths.setting_choice(key)) + (f"  (from ${env}, which wins over this screen)" if os.environ.get(env) else "")
+def _from_env(*names: str) -> str:
+    """Says which environment variable sets a default, so the saved one is ignored. A name without `REC2NOTES_`
+    is a setting's key; the first variable set wins."""
+    for name in names:
+        env = name if name.startswith("REC2NOTES_") else paths.SETTING_ENV[name]
+        if os.environ.get(env):
+            return f"  (from ${env}, which wins over this screen)"
+    return ""
 
 
 def _model_name(model: str | None) -> str:
     return model or "Claude Code's default"
+
+
+def antigravity_agreed() -> bool:
+    return paths.saved_settings().get("antigravity_consent") == "yes"
+
+
+def agree_to_antigravity(console: ui.Console, ask: Callable[[str], str]) -> bool:
+    """Antigravity sends the note and transcript to Google: say so and ask, once; the yes is saved in settings.toml."""
+    if antigravity_agreed():
+        return True
+    console.line(ANTIGRAVITY_NOTICE)
+    if not _yes(console, ask, "Use Antigravity? Asked once, the answer is saved. [y/N] ", default=False):
+        return False
+    paths.save_setting("antigravity_consent", "yes")
+    return True
+
+
+def _ask_agent(console, ask, current: str) -> str:
+    """The agent the user picks; Antigravity only once its notice is agreed to, else `current` stays."""
+    names = list(merge.AGENTS)
+    labels = [agent.label + ("" if shutil.which(agent.program) else f"  (not installed: {agent.install_hint()})")
+              for agent in merge.AGENTS.values()]
+    agent = names[_pick(console, ask, "Agent, the AI that writes the note:", labels, names.index(current))]
+    if agent == "antigravity" and not agree_to_antigravity(console, ask):
+        console.line(f"Keeping {merge.AGENTS[current].label}.")
+        return current
+    return agent
+
+
+def _ask_model(console, ask, agent: str, current: str | None) -> str | None:
+    return _ask_claude_model(console, ask, current) if agent == "claude" else _ask_antigravity_model(console, ask, current)
+
+
+def _ask_antigravity_model(console, ask, current: str) -> str:
+    """One of the models `agy models` lists; if agy can't list them, any name typed."""
+    console.line("Asking agy which models your account has...")
+    try:
+        models = merge.antigravity_models()
+    except Abort as e:
+        console.line(str(e))
+        return _ask(ask, f"Model name, as `agy models` lists it (Enter keeps {current}): ", allow_empty=True) or current
+    labels = [m + ("  (rec2notes' default)" if m == paths.ANTIGRAVITY_MODEL else "") for m in models]
+    return models[_pick(console, ask, "Antigravity model (its name carries the effort):", labels,
+                        models.index(current) if current in models else None)]
 
 
 def _ask_claude_model(console, ask, current: str | None) -> str | None:

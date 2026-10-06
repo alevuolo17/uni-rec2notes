@@ -9,10 +9,11 @@ import subprocess
 import sys
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import rec2notes
-from rec2notes import cli, courses, paths, setup, transcribe
+from rec2notes import cli, courses, merge, paths, setup, transcribe
 
 from .helpers import FIXTURES, MODEL, TESTS, Sandbox
 
@@ -92,14 +93,14 @@ class Output(Sandbox):
         paths.save_setting("effort", "low")
         paths.save_setting("claude_model", "haiku")
         args = cli.parse_args([str(self.note), str(self.audio)])
-        self.assertEqual((args.effort, args.claude_model), ("low", "haiku"))
+        self.assertEqual((args.effort, args.model), ("low", "haiku"))
         os.environ["REC2NOTES_EFFORT"] = "medium"
         self.assertEqual(cli.parse_args([str(self.note), str(self.audio)]).effort, "medium")
         self.assertEqual(cli.parse_args([str(self.note), str(self.audio), "--effort", "max"]).effort, "max")
 
     def test_without_saved_settings_the_effort_is_high_and_the_model_claude_codes(self):
         args = cli.parse_args([str(self.note), str(self.audio)])
-        self.assertEqual((args.effort, args.claude_model), ("high", None))
+        self.assertEqual((args.effort, args.model), ("high", None))
 
     def test_a_bad_saved_effort_is_refused(self):
         paths.save_setting("effort", "huge")
@@ -348,6 +349,185 @@ class Create(Sandbox):
         self.assertEqual(self.calls("claude") + self.calls("whisper"), [])
         self.assertFalse(self.created.exists())
         self.assertEqual(self.run_dirs(), [])
+
+
+class Antigravity(Sandbox):
+    AGY_ARGS = ["-p=", "--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands",
+                "--print-timeout", "12h", "--model"]
+
+    def setUp(self):
+        super().setUp()
+        paths.save_setting("antigravity_consent", "yes")
+
+    def test_merges_in_a_throwaway_home_holding_only_its_settings_and_deletes_it(self):
+        code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Aggiunta dal transcript.[^conflitto-1]", self.output.read_text(encoding="utf-8"))
+        self.assertIn(f"✓ Merge       antigravity {paths.ANTIGRAVITY_MODEL}", out)
+        self.assertNotIn("⚠", out)
+        run_dir = self.run_dirs()[0]
+        self.assertEqual(sorted(p.name for p in run_dir.iterdir()),
+                         ["agy-events.jsonl", "agy-stderr.txt", "check.txt", "input.txt", "p1.json", "reply.md",
+                          "whisper-args.txt", "whisper.log"])
+        (call,) = self.calls("agy")
+        self.assertEqual(call["args"], [*self.AGY_ARGS, paths.ANTIGRAVITY_MODEL])
+        self.assertEqual((Path(call["home"]).name, Path(call["home"]).parent.name), ("agy-home", run_dir.name))
+        self.assertEqual((Path(call["cwd"]).name, call["cwd_files"]), ("agy-work", []))
+        self.assertEqual(call["settings"], merge.AGY_SETTINGS)
+        self.assertEqual(call["xdg"], [], "no XDG folder may lead agy to the real ones")
+        self.assertFalse((self.home / ".gemini").exists())
+
+    def test_a_used_tool_is_warned_about_and_the_note_still_written(self):
+        os.environ["FAKE_AGY_MODE"] = "search"
+        code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(self.output.exists())
+        self.assertIn("⚠ Merge       the agent used search_web: check the note", out)
+        self.assertIn("  Tools          the agent used search_web\n", out)
+
+    def test_a_denied_tool_twice_stops_the_run_and_names_the_tool(self):
+        os.environ["FAKE_AGY_MODE"] = "denied"
+        code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 1)
+        self.assertIn("agy returned an empty reply twice", err)
+        self.assertIn("It tried to use read_file, which rec2notes blocks", err)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(len(self.calls("agy")), 2)
+        self.assertFalse((self.run_dirs()[0] / "agy-home").exists())
+
+    def test_a_failed_call_deletes_the_home_too(self):
+        os.environ["FAKE_AGY_MODE"] = "fail"
+        code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 1)
+        self.assertIn("fake agy: something went wrong", err)
+        self.assertEqual([p.name for p in self.run_dirs()[0].iterdir() if p.name.startswith("agy-")],
+                         ["agy-events.jsonl", "agy-stderr.txt"])
+
+    def test_deleting_the_home_tries_again_while_a_file_in_it_is_locked(self):
+        rmtree = shutil.rmtree
+        locked = iter([True, True])  # Windows: agy's background updater holds a lock for a moment after agy exits
+
+        def flaky(path, *args, **kwargs):
+            if next(locked, False):
+                raise PermissionError(13, "in use")
+            rmtree(path, *args, **kwargs)
+        with mock.patch.object(merge.shutil, "rmtree", flaky), mock.patch.object(merge.time, "sleep") as slept:
+            code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(slept.call_count, 2)
+        self.assertFalse((self.run_dirs()[0] / "agy-home").exists())
+        self.assertNotIn("could not delete", out + err)
+
+    def test_a_home_that_stays_locked_is_named_and_listing_models_still_works(self):
+        with (mock.patch.object(merge.shutil, "rmtree", side_effect=PermissionError(13, "in use")),
+              mock.patch.object(merge.time, "sleep"),
+              mock.patch.object(merge.tempfile, "tempdir", str(self.tmp))):  # the Sandbox deletes what stays
+            self.assertIn(paths.ANTIGRAVITY_MODEL, merge.antigravity_models())
+            code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"could not delete {self.run_dirs()[0] / 'agy-home'}, which may hold a copy of the conversation", out + err)
+
+    def test_a_signed_out_agy_stops_the_run_before_transcribing(self):
+        os.environ["FAKE_AGY_MODE"] = "hang"
+        with mock.patch.object(merge, "AGY_TIMEOUT", 1):
+            code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 1)
+        self.assertIn("agy did not answer in 1 s: not signed in, or no network; run `agy` once and sign in", err)
+        self.assertEqual(self.calls("agy") + self.calls("whisper"), [])
+
+    def test_a_model_the_account_lacks_stops_the_run(self):
+        code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity", "--model", "nope")
+        self.assertEqual(code, 1)
+        self.assertIn("Antigravity has no model 'nope'; yours: gemini-3.8-flash-high, gemini-3.8-flash-low", err)
+        self.assertEqual(self.calls("whisper"), [])
+
+    def test_the_effort_is_ignored_with_a_note(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            args = cli.parse_args([str(self.note), str(self.audio), "--agent", "antigravity", "--effort", "max"])
+        self.assertIsNone(args.effort)
+        self.assertIn("--effort is for claude; Antigravity's model names carry the effort", err.getvalue())
+
+    def test_agent_and_model_precedence(self):
+        parse = lambda *extra: cli.parse_args([str(self.note), str(self.audio), *extra])
+        paths.save_setting("antigravity_model", "gemini-3.8-flash-low")
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        self.assertEqual((parse().agent, parse().model), ("antigravity", "gemini-3.8-flash-low"))
+        os.environ["REC2NOTES_MODEL"] = "from-env"
+        self.assertEqual(parse().model, "from-env")
+        self.assertEqual(parse("--model", "flag").model, "flag")
+        os.environ["REC2NOTES_CLAUDE_MODEL"] = "sonnet"
+        self.assertEqual((parse("--agent", "claude").agent, parse("--agent", "claude").model), ("claude", "from-env"))
+        del os.environ["REC2NOTES_MODEL"]
+        self.assertEqual(parse("--agent", "claude").model, "sonnet")
+        self.assertEqual(parse("--agent", "claude", "--claude-model", "opus").model, "opus")
+
+    def test_an_unknown_agent_is_refused(self):
+        os.environ["REC2NOTES_AGENT"] = "gpt"
+        err = io.StringIO()
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(err):
+            cli.parse_args([str(self.note), str(self.audio)])
+        self.assertIn("the agent must be one of claude, antigravity, not 'gpt'", err.getvalue())
+
+    def test_clean_and_create(self):
+        code, out, err = self.rec2notes("clean", self.note, "--agent", "antigravity")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(self.note.with_name("Lezione 1 (pulito).md").read_text(encoding="utf-8").startswith("Pulito."))
+        self.assertEqual(sorted(p.name for p in self.run_dirs()[0].iterdir()),
+                         ["clean-agy-events.jsonl", "clean-agy-stderr.txt", "clean-reply.md"])
+        created = self.note.with_name("Lezione 2.md")
+        code, out, err = self.rec2notes("create", created, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(created.read_text(encoding="utf-8"), "## Appunti di Reti di calcolatori\n\nNota creata dal transcript.\n")
+        self.assertEqual([c["args"][-1] for c in self.calls("agy")], [paths.ANTIGRAVITY_MODEL] * 2)
+
+    def test_dry_run_shows_the_command_and_runs_nothing(self):
+        code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"would pipe this to: agy -p= {shlex.join(self.AGY_ARGS[1:])} {paths.ANTIGRAVITY_MODEL}", err)
+        self.assertIn("with the prompt merge.md at its top", err)
+        self.assertEqual(self.calls("agy"), [])
+
+
+class AntigravityConsent(Sandbox):
+    def run_on_terminal(self, answer):
+        with (mock.patch.object(cli, "on_terminal", return_value=True),
+              mock.patch("builtins.input", **{"side_effect" if isinstance(answer, BaseException) else "return_value": answer}) as asked):
+            code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        return code, out, err, asked
+
+    def test_off_a_terminal_the_first_run_stops_before_sending_anything(self):
+        code, out, err = self.rec2notes(self.note, self.audio, "--agent", "antigravity")
+        self.assertEqual(code, 1)
+        self.assertIn("Antigravity sends your note and transcript to Google: run rec2notes with --agent antigravity once in a terminal", err)
+        self.assertEqual(self.calls("agy") + self.calls("whisper"), [])
+
+    def test_on_a_terminal_it_explains_and_a_yes_is_saved(self):
+        code, out, err, asked = self.run_on_terminal("y")
+        self.assertEqual(code, 0, err)
+        self.assertIn("On personal accounts, those terms let Google use what you send to improve its models", out)
+        self.assertEqual(paths.saved_settings()["antigravity_consent"], "yes")
+        self.output.unlink()
+        code, out, err, asked = self.run_on_terminal("n")  # saved: not asked again
+        self.assertEqual(code, 0, err)
+        asked.assert_not_called()
+
+    def test_anything_but_yes_stops_and_saves_nothing(self):
+        code, out, err, asked = self.run_on_terminal("")
+        self.assertEqual(code, 1)
+        self.assertIn("nothing was sent. To use Claude Code instead, pass --agent claude", err)
+        self.assertNotIn("antigravity_consent", paths.saved_settings())
+        self.assertEqual(self.calls("agy") + self.calls("whisper"), [])
+
+    def test_ctrl_d_at_the_question_is_a_no(self):
+        code, out, err, asked = self.run_on_terminal(EOFError())
+        self.assertEqual(code, 1)
+        self.assertIn("nothing was sent", err)
+        self.assertNotIn("antigravity_consent", paths.saved_settings())
+
+    def test_claude_and_dry_runs_never_ask(self):
+        self.assertEqual(self.rec2notes(self.note, self.audio, "--agent", "antigravity", "--dry-run")[0], 0)
+        self.assertEqual(self.rec2notes(self.note, self.audio)[0], 0)
 
 
 class DryRun(Sandbox):

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Fake `claude` for the tests: never calls the real one.
 
-A call with the clean prompt (prompts/clean.md) replies with its input under "Pulito.", and one with the create
-prompt (prompts/create.md) with a short note naming the course, except in the modes empty, fail and stop-parent.
+It replies as replies.py says for the prompt, except in the modes empty, fail and stop-parent.
 FAKE_CLAUDE_MODE picks the reply: good (default), empty, empty-then-good, fail, logged-out (`auth status`
 fails), drop (the good reply without the first occurrence of FAKE_CLAUDE_DROP), or stop-parent (sends SIGTERM to its parent, as if rec2notes were stopped, and keeps "working").
 Every call appends its arguments, as a JSON line, to FAKE_CLAUDE_LOG.
 """
 import json
 import os
-import re
 import signal
 import sys
 import time
+
+import replies  # next to this script
 
 if sys.argv[1:3] == ["auth", "status"]:  # not a merge call: not logged either
     sys.exit(1 if os.environ.get("FAKE_CLAUDE_MODE") == "logged-out" else 0)
@@ -34,25 +34,4 @@ if mode == "fail":
     sys.exit("fake claude: something went wrong")
 if mode == "empty":
     sys.exit(0)
-if prompt == "clean.md":
-    sys.stdout.write("Pulito.\n\n" + stdin)
-    sys.exit(0)
-if prompt == "create.md":
-    course = re.search(r"^name: (.*)$", stdin, re.M).group(1)
-    sys.stdout.write(f"## Appunti di {course}\n\nNota creata dal transcript.\n")
-    sys.exit(0)
-note = re.search(r"<notes>\n(.*?)</notes>", stdin, re.S).group(1)
-if mode == "drop":
-    note = note.replace(os.environ["FAKE_CLAUDE_DROP"], "", 1)
-
-# Additions go before the note's own footnote definitions; new definitions go after them.
-lines = note.splitlines(keepends=True)
-cut = next((i for i, line in enumerate(lines) if re.match(r"\[\^[^\]]+\]:", line)), len(lines))
-body, footnotes = "".join(lines[:cut]).rstrip("\n"), "".join(lines[cut:])
-sys.stdout.write(
-    body + " Aggiunta dal transcript.[^conflitto-1]\n\n"
-    "## Argomenti non presenti negli appunti\n\n"
-    "- **SYN flood** [01:02:05], dopo «DMZ»: contenuto.\n\n"
-    + footnotes
-    + "[^conflitto-1]: **Appunti:** «x» — **Audio [00:01:01]:** «y»\n"
-)
+sys.stdout.write(replies.reply(prompt, stdin, mode))

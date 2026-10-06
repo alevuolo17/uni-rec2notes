@@ -1,8 +1,15 @@
-"""The agent steps: build the merge input and run `claude -p` on it (or on a note to clean, or a note to create)."""
+"""The agent steps: build the merge input and run the agent (`claude -p` or `agy -p`) on it, or on a note to clean,
+or a note to create."""
 
+import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import Abort, paths, stopping
@@ -30,6 +37,37 @@ def _transcript(transcript: str) -> str:
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # what claude --effort takes
 
 
+@dataclass(frozen=True)
+class Agent:
+    label: str  # the product's name, for messages
+    program: str  # the command on PATH
+    page: str  # where to get it
+
+    def install_hint(self) -> str:
+        return f"see {self.page}, and make sure `{self.program}` is on PATH"
+
+
+AGENTS = {"claude": Agent("Claude Code", "claude", "https://claude.com/claude-code"),
+          "antigravity": Agent("Antigravity", "agy", "https://antigravity.google/docs/cli")}
+AGY_SETTINGS = {  # agy's settings.json in its throwaway home: every tool asks first, and headless mode denies what asks
+    "toolPermission": "strict", "enableTelemetry": False, "enableTerminalSandbox": True,
+    "allowNonWorkspaceAccess": False, "permissions": {"allow": []},
+}
+AGY_TIMEOUT = 60  # seconds for `agy models` (usually 2-5): it hangs when agy is not signed in
+AGY_DROPPED_ENV = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
+REMOVE_TRIES = 40  # a quarter of a second apart: on Windows a background agy (its updater) locks a file for a moment
+
+
+@dataclass(frozen=True)
+class Reply:
+    text: str
+    tools: list[str]  # the tools the agent used; Antigravity's web search can't be turned off
+
+
+def command(agent: str, effort: str | None, model: str | None, prompt: Path = paths.MERGE_PROMPT) -> list[str]:
+    return antigravity_command(model) if agent == "antigravity" else claude_command(effort, model, prompt)
+
+
 def claude_command(effort: str, model: str | None, prompt: Path = paths.MERGE_PROMPT) -> list[str]:
     cmd = ["claude", "-p", "--effort", effort, "--tools", "", "--no-session-persistence",
            "--system-prompt-file", str(prompt)]
@@ -38,35 +76,150 @@ def claude_command(effort: str, model: str | None, prompt: Path = paths.MERGE_PR
     return cmd
 
 
-def run_claude(input_text: str, run_dir: Path, effort: str, model: str | None,
-               notify: Callable[[str], None] = lambda message: print(message, file=sys.stderr),
-               prompt: Path = paths.MERGE_PROMPT, file_prefix: str = "") -> str:
-    """Claude's reply to `input_text` under the system prompt `prompt`, retrying once when the call fails
+def antigravity_command(model: str) -> list[str]:
+    """agy reads one stream-json message from stdin (-p only takes the prompt as an argument, too short for a
+    transcript); its model names carry the effort. No slash commands or skills expanded from the message. No timeout
+    in practice, as for claude."""
+    return ["agy", "-p=", "--input-format", "stream-json", "--output-format", "stream-json",
+            "--disable-slash-commands", "--print-timeout", "12h", "--model", model]
+
+
+def agy_env(home: Path) -> dict[str, str]:
+    """agy's environment: its home at `home`, so it reads only rec2notes' settings (none of the user's allowed
+    commands, GEMINI.md, MCP servers or plugins) and saves the conversation there; without the XDG folders, so
+    nothing lands in the real ones. The login stays reachable: it is in the system keyring."""
+    env = {k: v for k, v in os.environ.items() if k.upper() not in AGY_DROPPED_ENV}
+    env["HOME"] = str(home)
+    if paths.WINDOWS:
+        env["USERPROFILE"] = str(home)
+    return env
+
+
+def antigravity_models() -> list[str]:
+    """The models the signed-in account can use, from `agy models` (it sends no prompt)."""
+    home = Path(tempfile.mkdtemp(prefix="rec2notes-agy-"))
+    try:
+        listing = subprocess.run([paths.program("agy"), "models"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, cwd=home,
+                                 env=agy_env(home), timeout=AGY_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise Abort(f"agy did not answer in {AGY_TIMEOUT} s: not signed in, or no network; run `agy` once and sign in") from None
+    except OSError as e:
+        raise Abort(f"could not run agy: {e.strerror}") from None
+    finally:
+        try:
+            remove_home(home)
+        except OSError:
+            pass  # it holds no prompt: agy only listed the models
+    models = [line.split("\t")[0] for line in listing.stdout.splitlines() if "\t" in line]
+    if listing.returncode or not models:
+        last = (listing.stderr.strip().splitlines() or ["no models listed"])[-1]
+        raise Abort(f"`agy models` failed: {last.rstrip('.')}; run `agy` once and sign in")
+    return models
+
+
+def remove_home(folder: Path) -> None:
+    """Delete one of agy's throwaway folders, trying again while something still holds a file in it."""
+    for _ in range(REMOVE_TRIES - 1):
+        try:
+            shutil.rmtree(folder)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            time.sleep(0.25)
+    shutil.rmtree(folder)
+
+
+def run_agent(agent: str, input_text: str, run_dir: Path, effort: str | None, model: str | None,
+              notify: Callable[[str], None] = lambda message: print(message, file=sys.stderr),
+              prompt: Path = paths.MERGE_PROMPT, file_prefix: str = "") -> Reply:
+    """The agent's reply to `input_text` under the system prompt `prompt`, retrying once when the call fails
     or the reply is empty. The reply and stderr are kept in the run directory under `file_prefix`.
 
-    Runs in the run directory so that no CLAUDE.md or settings from the caller's
-    working directory reach the agent. No timeout: a full lecture takes minutes.
+    Runs in the run directory (Antigravity: an empty folder in it) so that no CLAUDE.md, AGENTS.md or settings
+    from the caller's working directory reach the agent. No timeout: a full lecture takes minutes.
     """
-    reply_path, stderr_path = run_dir / f"{file_prefix}reply.md", run_dir / f"{file_prefix}claude-stderr.txt"
-    cmd = claude_command(effort, model, prompt)
-    cmd[0] = paths.program(cmd[0])
+    program = AGENTS[agent].program
+    reply_path, stderr_path = run_dir / f"{file_prefix}reply.md", run_dir / f"{file_prefix}{program}-stderr.txt"
+    denied: list[str] = []
     for attempt in (1, 2):
         stopping.check()
-        with (open(stderr_path, "a", encoding="utf-8") as stderr,
-              subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=stderr, text=True, encoding="utf-8", cwd=run_dir) as proc,
-              stopping.child(proc)):
-            reply, _ = proc.communicate(input_text)
+        if agent == "antigravity":
+            status, reply, tools, denied = _call_antigravity(input_text, run_dir, model, prompt, stderr_path,
+                                                             run_dir / f"{file_prefix}agy-events.jsonl", notify)
+        else:
+            status, reply, tools = _call_claude(input_text, run_dir, effort, model, prompt, stderr_path)
         reply_path.write_text(reply, encoding="utf-8")
         stopping.check()
-        if proc.returncode == 0 and reply.strip():
-            return reply
-        problem = f"exited with status {proc.returncode}" if proc.returncode else "returned an empty reply"
+        if status == 0 and reply.strip():
+            return Reply(reply, tools)
+        problem = f"exited with status {status}" if status else "returned an empty reply"
         if attempt == 1:
-            notify(f"claude {problem}; retrying once...")
+            notify(f"{program} {problem}; retrying once...")
     tail = stderr_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-5:]
     details = ("\n  " + "\n  ".join(tail)) if tail else ""
-    raise Abort(f"claude {problem} twice. The reply and claude's stderr are kept in {run_dir}{details}")
+    blocked = (f"\nIt tried to use {', '.join(denied)}, which rec2notes blocks: the transcript may contain "
+               "instructions aimed at the agent." if denied else "")
+    raise Abort(f"{program} {problem} twice. The reply and {program}'s stderr are kept in {run_dir}{details}{blocked}")
+
+
+def _call_claude(input_text: str, run_dir: Path, effort: str, model: str | None, prompt: Path,
+                 stderr_path: Path) -> tuple[int, str, list[str]]:
+    cmd = claude_command(effort, model, prompt)
+    cmd[0] = paths.program(cmd[0])
+    with (open(stderr_path, "a", encoding="utf-8") as stderr,
+          subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                           stderr=stderr, text=True, encoding="utf-8", cwd=run_dir) as proc,
+          stopping.child(proc)):
+        reply, _ = proc.communicate(input_text)
+    return proc.returncode, reply, []  # --tools "": it has none
+
+
+def _call_antigravity(input_text: str, run_dir: Path, model: str, prompt: Path, stderr_path: Path,
+                      events_path: Path, notify: Callable[[str], None]) -> tuple[int, str, list[str], list[str]]:
+    """One agy call in a throwaway home holding only rec2notes' settings, deleted afterwards with the conversation
+    agy saves there. agy has no system prompt option, so the prompt opens the message."""
+    home, work = run_dir / "agy-home", run_dir / "agy-work"
+    settings = home / ".gemini" / "antigravity-cli" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)  # exists only if deleting it after the last attempt failed
+    settings.write_text(json.dumps(AGY_SETTINGS), encoding="utf-8")
+    work.mkdir(exist_ok=True)
+    content = f"{prompt.read_text(encoding='utf-8')}\n\n{input_text}"
+    cmd = antigravity_command(model)
+    cmd[0] = paths.program(cmd[0])
+    try:
+        with (open(stderr_path, "a", encoding="utf-8") as stderr,
+              subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, text=True,
+                               encoding="utf-8", errors="replace", cwd=work, env=agy_env(home)) as proc,
+              stopping.child(proc)):
+            events, _ = proc.communicate(json.dumps({"event": "user", "message": {"content": content}}) + "\n")
+    finally:
+        for folder in (home, work):
+            try:
+                remove_home(folder)
+            except OSError as e:
+                notify(f"could not delete {folder}, which may hold a copy of the conversation ({e.strerror}): delete it yourself")
+    with open(events_path, "a", encoding="utf-8") as f:
+        f.write(events)
+    return proc.returncode, *_read_events(events)
+
+
+def _read_events(events: str) -> tuple[str, list[str], list[str]]:
+    """(reply, tools used, tools denied) from agy's stream-json output."""
+    reply, tools, denied = "", [], []
+    for line in events.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        step, result = event.get("step_update") or {}, event.get("result") or {}
+        if step.get("step_type") == "tool" and step.get("tool_name") and step["tool_name"] not in tools:
+            tools.append(step["tool_name"])
+        if event.get("event") == "result":
+            reply = result.get("response") or ""
+            denied = [a.get("action", "?") for a in result.get("denied_actions") or []]
+    return reply, tools, denied
 
 
 def _with_final_newline(text: str) -> str:

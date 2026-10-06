@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 (2026-10-06)
+
+- agents: Antigravity defaults to gemini-3.8-flash-high, no model matrix
+- agents: retry deleting agy's home on Windows, no slash commands
+- readme: setup picks the agent, Settings switches it
+- setup: use the agent installed, and ask when both are
+- menu: pick the agent and its model in Settings and at c
+- readme: Antigravity instead of Claude Code, and privacy and security
+- agents: doctor and setup check the chosen agent
+- cli: one on_terminal() for the three terminal checks
+- agents: ask once before Antigravity sends a note to Google
+- agents: run the merge, clean and create with Antigravity's agy (--agent antigravity)
+- cli: name the agent's model args.model, not args.claude_model
+- readme: add an Italian version, switchable from the top
+- setup: clone whisper.cpp at a pinned tag and commit on Linux
+
 ## 0.2.1 (2026-10-05)
 
 - menu: show the transcript's size before a run starts

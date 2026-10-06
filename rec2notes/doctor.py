@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import Abort, version, courses, paths, transcribe, ui
+from . import Abort, version, courses, merge, paths, transcribe, ui
 
 PACKAGES_HINT = "install it with your package manager (the README lists the packages)"
 COURSES = "`rec2notes` → 3 Courses"  # where courses and their folders are set
@@ -18,7 +18,12 @@ AUTH_TIMEOUT = 20  # seconds; `claude auth status` may reach the network
 
 def run(console: ui.Console) -> int:
     """Print the checklist; 1 if anything failed (warnings don't count), else 0."""
-    results = [("ok", "rec2notes", version(), None), claude_installed(), claude_logged_in(), ffmpeg(), rec2notes_folder()]
+    agent = paths.setting_choice("agent")
+    if agent not in merge.AGENTS:
+        agents = [("fail", "Agent", f"unknown agent {agent!r}", f"use one of {', '.join(merge.AGENTS)}")]
+    else:
+        agents = [agent_installed(agent), agent_logged_in(agent)]
+    results = [("ok", "rec2notes", version(), None), *agents, ffmpeg(), rec2notes_folder()]
     if results[-1][0] == "ok":  # the rest lives in the folder
         results += [whisper_cli(), *models(paths.whisper_model_choice()), *folders()]
     width = max(ui.LABEL_WIDTH, *(len(label) for _, label, _, _ in results))
@@ -38,12 +43,20 @@ def run(console: ui.Console) -> int:
     return 1 if failed else 0
 
 
-def start_problems(model: str, caches: list[Path]) -> list[str]:
-    """What stops a run from starting, checked before a long transcription: Whisper's needs only matter while a
-    recording has no cached transcript (`caches`, one per recording, for `model`)."""
+def start_problems(agent: str, agent_model: str | None, model: str, caches: list[Path]) -> list[str]:
+    """What stops a run from starting, checked before a long transcription: the agent, and Antigravity's login
+    and model (agy would hang signed out); Whisper's needs only matter while a recording has no cached transcript
+    (`caches`, one per recording, for the Whisper `model`)."""
     problems = []
-    if not shutil.which("claude"):
-        problems.append("claude (Claude Code) is not on PATH")
+    program, label = merge.AGENTS[agent].program, merge.AGENTS[agent].label
+    if not shutil.which(program):
+        problems.append(f"{program} ({label}) is not on PATH")
+    elif agent == "antigravity":
+        try:
+            if agent_model not in (models := merge.antigravity_models()):
+                problems.append(f"Antigravity has no model {agent_model!r}; yours: {', '.join(models)}")
+        except Abort as e:
+            problems.append(str(e))
     if not all(c.exists() for c in caches):
         if not shutil.which("ffmpeg"):
             problems.append("ffmpeg is not installed")
@@ -55,23 +68,35 @@ def start_problems(model: str, caches: list[Path]) -> list[str]:
     return problems
 
 
-def claude_installed() -> tuple:
-    found = shutil.which("claude")
+def agent_installed(agent: str) -> tuple:
+    program, label = merge.AGENTS[agent].program, merge.AGENTS[agent].label
+    found = shutil.which(program)
     if found:
-        return "ok", "Claude Code", found, None
-    return "fail", "Claude Code", "not on PATH", "see https://claude.com/claude-code, and make sure `claude` is on PATH"
+        return "ok", label, found, None
+    return "fail", label, "not on PATH", merge.AGENTS[agent].install_hint()
+
+
+def agent_logged_in(agent: str) -> tuple:
+    program, label = merge.AGENTS[agent].program, merge.AGENTS[agent].label
+    if not shutil.which(program):
+        return "warn", f"{label} login", f"not checked: {label} is missing", None
+    if agent == "antigravity":
+        try:
+            merge.antigravity_models()  # lists the account's models: no prompt is sent
+        except Abort as e:
+            return "fail", f"{label} login", str(e), None  # the message says what to do
+        return "ok", f"{label} login", "signed in", None
+    return claude_logged_in()
 
 
 def claude_logged_in() -> tuple:
-    if not shutil.which("claude"):
-        return "warn", "Claude login", "not checked: Claude Code is missing", None
     try:
         status = subprocess.run([paths.program("claude"), "auth", "status"], capture_output=True, timeout=AUTH_TIMEOUT).returncode
     except (OSError, subprocess.TimeoutExpired):
-        return "warn", "Claude login", "could not check", "run `claude auth status` yourself"
+        return "warn", "Claude Code login", "could not check", "run `claude auth status` yourself"
     if status == 0:
-        return "ok", "Claude login", "logged in", None
-    return "fail", "Claude login", "not logged in", "run `claude auth login`"
+        return "ok", "Claude Code login", "logged in", None
+    return "fail", "Claude Code login", "not logged in", "run `claude auth login`"
 
 
 def ffmpeg() -> tuple:

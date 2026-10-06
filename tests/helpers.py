@@ -44,18 +44,21 @@ class Sandbox(unittest.TestCase):
             "XDG_CONFIG_HOME": str(self.tmp / "config"),  # the pointer's; it wins over %APPDATA% too
             "PATH": f"{FAKES}{os.pathsep}{os.environ.get('PATH', '')}",
             "FAKE_CLAUDE_LOG": str(self.tmp / "claude.log"),
+            "FAKE_AGY_LOG": str(self.tmp / "agy.log"),
             "FAKE_WHISPER_LOG": str(self.tmp / "whisper.log"),
             "FAKE_PYTHON": sys.executable,  # for the fakes' .cmd wrappers on Windows
             "PYTHONUTF8": "1",  # the fakes read and write UTF-8, as the real programs do
         })
         env.start()
         self.addCleanup(env.stop)
-        for var in ("REC2NOTES_EFFORT", "REC2NOTES_CLAUDE_MODEL", "REC2NOTES_WHISPER_MODEL", "FAKE_CLAUDE_MODE",
+        for var in ("REC2NOTES_AGENT", "REC2NOTES_MODEL", "REC2NOTES_EFFORT", "REC2NOTES_CLAUDE_MODEL",
+                    "REC2NOTES_WHISPER_MODEL", "FAKE_CLAUDE_MODE", "FAKE_AGY_MODE",
                     "FORCE_COLOR"):  # FORCE_COLOR makes argparse colour the usage on Python 3.14
             os.environ.pop(var, None)
-        fake = FAKES / ("claude.cmd" if paths.WINDOWS else "claude")
-        self.assertEqual(os.path.normcase(str(shutil.which("claude"))), os.path.normcase(fake),
-                         "the tests must never reach the real claude")
+        for agent in ("claude", "agy"):
+            fake = FAKES / (f"{agent}.cmd" if paths.WINDOWS else agent)
+            self.assertEqual(os.path.normcase(str(shutil.which(agent))), os.path.normcase(fake),
+                             f"the tests must never reach the real {agent}")
 
         self.folder = self.tmp / "rec2notes"
         self.folder.mkdir()
@@ -109,8 +112,9 @@ class Sandbox(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def calls(self, fake):
-        """The argument lists the fake `claude` or `whisper-cli` was called with."""
-        log = self.tmp / f"{'claude' if fake == 'claude' else 'whisper'}.log"
+        """The argument lists the fake `claude` or `whisper-cli` was called with; for the fake `agy`, a dict per
+        call with its arguments, home, working directory and settings."""
+        log = self.tmp / f"{fake if fake in ('claude', 'agy') else 'whisper'}.log"
         return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
     def run_dirs(self):

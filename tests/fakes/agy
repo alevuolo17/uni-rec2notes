@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Fake `agy` (Antigravity's CLI) for the tests: never calls the real one.
+
+`agy models` lists two models. A print call reads one stream-json message, finds which prompt of rec2notes/prompts
+opens it, and answers as replies.py says, in agy's stream-json events. It saves a conversation under $HOME, as agy
+does, so the tests can check that rec2notes deletes it.
+FAKE_AGY_MODE picks the behaviour: good (default), search (uses search_web, then replies), denied (a tool was denied:
+empty reply), fail (exits 1), hang (doesn't answer for a while, as a signed-out agy never does).
+Every print call appends its arguments, home, working directory (and its files), the settings it found and the XDG
+folders it was given, as a JSON line, to FAKE_AGY_LOG.
+"""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+import replies  # next to this script
+
+PROMPTS = Path(__file__).resolve().parents[2] / "rec2notes" / "prompts"
+mode = os.environ.get("FAKE_AGY_MODE", "good")
+if mode == "hang":
+    time.sleep(5)  # longer than the tests' patched timeout
+if sys.argv[1:] == ["models"]:
+    print("Fetching available models...", file=sys.stderr)
+    print("gemini-3.8-flash-high\tGemini 3.8 Flash (High)\ngemini-3.8-flash-low\tGemini 3.8 Flash (Low)")
+    sys.exit(0)
+
+state = Path(os.environ["HOME"]) / ".gemini" / "antigravity-cli"
+settings = state / "settings.json"
+with open(os.environ["FAKE_AGY_LOG"], "a", encoding="utf-8") as f:
+    f.write(json.dumps({"args": sys.argv[1:], "home": os.environ["HOME"], "cwd": os.getcwd(),
+                        "cwd_files": os.listdir("."),
+                        "settings": json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else None,
+                        "xdg": [k for k in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME") if k in os.environ]}) + "\n")
+(state / "conversations").mkdir(parents=True, exist_ok=True)
+(state / "conversations" / "fake.db").write_text("the conversation", encoding="utf-8")
+
+content = json.loads(sys.stdin.readline())["message"]["content"]
+prompt = next(p for p in sorted(PROMPTS.glob("*.md")) if content.startswith(p.read_text(encoding="utf-8") + "\n\n"))
+stdin = content[len(prompt.read_text(encoding="utf-8")) + 2:]
+if mode == "fail":
+    sys.exit("fake agy: something went wrong")
+
+
+def event(name, **body):
+    print(json.dumps({"event": name, name: body}))
+
+
+event("init", model="fake", tools=["search_web", "view_file"])
+response = ""
+denied = []
+if mode == "search":
+    event("step_update", step_type="tool", tool_name="search_web", state="DONE")
+if mode == "denied":
+    denied = [{"action": "read_file", "display_name": "ViewFile"}]
+    print('jetski: no output produced — a tool required the "read_file" permission', file=sys.stderr)
+else:
+    response = replies.reply(prompt.name, stdin, mode)
+    event("step_update", step_type="agent_response", state="DONE", text_delta=response)
+event("result", status="SUCCESS", response=response, **({"denied_actions": denied} if denied else {}))

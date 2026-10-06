@@ -54,12 +54,17 @@ def add_whisper_option(p: argparse.ArgumentParser) -> None:
 
 
 def add_agent_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--agent", choices=tuple(merge.AGENTS),
+                   help="the agent that writes the note: claude (Claude Code) or antigravity (Antigravity's agy) "
+                        "(default: $REC2NOTES_AGENT, else the one saved in `rec2notes` → Settings, else claude)")
+    p.add_argument("--model", metavar="MODEL",
+                   help="the agent's model: for claude e.g. opus or sonnet (default: Claude Code's), for antigravity one "
+                        f"that `agy models` lists (default: {paths.ANTIGRAVITY_MODEL}). Default: $REC2NOTES_MODEL, "
+                        "else the one saved in `rec2notes` → Settings")
+    p.add_argument("--claude-model", dest="model", help=argparse.SUPPRESS)  # the old name of --model
     p.add_argument("--effort", metavar="LEVEL",
-                   help=f"claude effort: {', '.join(merge.EFFORTS)} (default: $REC2NOTES_EFFORT, else the one saved in "
-                        "`rec2notes` → Settings, else high)")
-    p.add_argument("--claude-model", metavar="MODEL",
-                   help="claude model (default: $REC2NOTES_CLAUDE_MODEL, else the one saved in `rec2notes` → Settings, "
-                        "else Claude Code's default)")
+                   help=f"claude's effort: {', '.join(merge.EFFORTS)} (default: $REC2NOTES_EFFORT, else the one saved in "
+                        "`rec2notes` → Settings, else high). Antigravity's model names carry theirs")
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -98,10 +103,19 @@ def parse_create_args(argv: list[str]) -> argparse.Namespace:
 
 def _checked(p: argparse.ArgumentParser, argv: list[str] | None) -> argparse.Namespace:
     args = p.parse_args(argv)
-    args.effort = args.effort or paths.setting_choice("effort")
-    args.claude_model = args.claude_model or paths.setting_choice("claude_model")
-    if args.effort not in merge.EFFORTS:
-        p.error(f"the effort must be one of {', '.join(merge.EFFORTS)}, not {args.effort!r}")
+    args.agent = args.agent or paths.setting_choice("agent")
+    if args.agent not in merge.AGENTS:
+        p.error(f"the agent must be one of {', '.join(merge.AGENTS)}, not {args.agent!r}")
+    args.model = args.model or paths.model_choice(args.agent)
+    if args.agent == "claude":
+        args.effort = args.effort or paths.setting_choice("effort")
+        if args.effort not in merge.EFFORTS:
+            p.error(f"the effort must be one of {', '.join(merge.EFFORTS)}, not {args.effort!r}")
+    else:
+        if args.effort:
+            print(f"rec2notes: --effort is for claude; {merge.AGENTS[args.agent].label}'s model names carry the effort "
+                  "(e.g. -high), so it is ignored", file=sys.stderr)
+        args.effort = None
     if "whisper_model" in args and not args.whisper_model:
         args.whisper_model = paths.whisper_model_choice()
     return args
@@ -118,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["course"]:
         return course_command(argv[1:])
     clean_only, create = argv[:1] == ["clean"], argv[:1] == ["create"]
-    menu_wanted = not argv and sys.stdin.isatty() and sys.stdout.isatty()
+    menu_wanted = not argv and on_terminal()
     if not argv and not menu_wanted:  # bare `rec2notes` in a pipe: show what it is and how to use it
         build_parser().print_help()
         return 0
@@ -237,20 +251,20 @@ def run(args: argparse.Namespace, console: ui.Console) -> int:
     if args.dry_run:
         return dry_run(args, course, note_text, caches)
 
-    preflight(args.whisper_model, caches)
+    preflight(args, args.whisper_model, caches)
     run_dir = make_run_dir(note.stem)
     console.header(course.name, note.name)
+    tools = []
     if args.clean:
-        note_text = clean_note(note_text, cleaned, run_dir, args, console)
+        cleaned_reply = clean_note(note_text, cleaned, run_dir, args, console)
+        note_text, tools = cleaned_reply.text, cleaned_reply.tools
 
     transcript = transcribe_all(args, course, caches, run_dir, console)
     confirm_size(transcript, console)
     input_text = merge.build_input(course, note_text, transcript)
     (run_dir / "input.txt").write_text(input_text, encoding="utf-8")
-    with console.step("Merge", agent_detail(args)) as step:
-        reply = merge.run_claude(input_text, run_dir, args.effort, args.claude_model,
-                                 notify=lambda message: step.note("warn", message))
-        step.end("ok", step.detail, ui.duration(step.elapsed))
+    merged_reply = call_agent(console, "Merge", agent_detail(args), args, input_text, run_dir)
+    reply, tools = merged_reply.text, [*tools, *(t for t in merged_reply.tools if t not in tools)]
     if not reply.endswith("\n"):
         reply += "\n"
 
@@ -262,7 +276,7 @@ def run(args: argparse.Namespace, console: ui.Console) -> int:
     else:
         console.mark("ok", "Check", "only additions")
     if check.TRANSCRIPT_MISMATCH in reply:
-        console.mark("warn", "Check", "Claude says the transcript doesn't match this note")
+        console.mark("warn", "Check", "the agent says the transcript doesn't match this note")
     stopping.check()
     write_output(output, reply, run_dir, args.force)
     console.mark("ok", "Write", output.name)
@@ -273,6 +287,7 @@ def run(args: argparse.Namespace, console: ui.Console) -> int:
         if len(changes) > WARNING_PASSAGES:
             shown.append(f"…and {len(changes) - WARNING_PASSAGES} more, see check.txt")
         rows.append(("Changed", shown, (ui.YELLOW,)))
+    rows += tools_rows(tools)
     rows.append(("Run", [_home(run_dir)], (ui.DIM,)))
     console.line()
     console.summary(rows)
@@ -318,11 +333,10 @@ def run_create(args: argparse.Namespace, console: ui.Console) -> int:
         transcript = cached_transcript(args, caches)
         words = spoken_words(transcript)
         sys.stdout.write(merge.build_create_input(course, transcript, words, target_words(words, args.length)))
-        command = merge.claude_command(args.effort, args.claude_model, paths.CREATE_PROMPT)
-        print(f"(dry run) would pipe this to: {shlex.join(command)}", file=sys.stderr)
+        print_command(args, paths.CREATE_PROMPT)
         return 0
 
-    preflight(args.whisper_model, caches)
+    preflight(args, args.whisper_model, caches)
     run_dir = make_run_dir(output.stem)
     console.header(course.name, output.name)
     transcript = transcribe_all(args, course, caches, run_dir, console)
@@ -330,10 +344,9 @@ def run_create(args: argparse.Namespace, console: ui.Console) -> int:
     words = spoken_words(transcript)
     input_text = merge.build_create_input(course, transcript, words, target_words(words, args.length))
     (run_dir / "input.txt").write_text(input_text, encoding="utf-8")
-    with console.step("Create", f"{agent_detail(args)} · length {args.length}%") as step:
-        reply = merge.run_claude(input_text, run_dir, args.effort, args.claude_model,
-                                 notify=lambda message: step.note("warn", message), prompt=paths.CREATE_PROMPT)
-        step.end("ok", step.detail, ui.duration(step.elapsed))
+    created = call_agent(console, "Create", f"{agent_detail(args)} · length {args.length}%", args, input_text, run_dir,
+                         prompt=paths.CREATE_PROMPT)
+    reply = created.text
     if not reply.endswith("\n"):
         reply += "\n"
     stopping.check()
@@ -343,7 +356,7 @@ def run_create(args: argparse.Namespace, console: ui.Console) -> int:
     note_words = len(reply.split())
     length = f"{note_words:,} words, {round(100 * note_words / max(words, 1))}% of the transcript (aimed at {args.length}%)"
     console.line()
-    console.summary([("Length", [length], (ui.DIM,)), ("Run", [_home(run_dir)], (ui.DIM,))])
+    console.summary([("Length", [length], (ui.DIM,)), *tools_rows(created.tools), ("Run", [_home(run_dir)], (ui.DIM,))])
     return 0
 
 
@@ -363,7 +376,7 @@ def confirm_size(transcript: str, console: ui.Console) -> None:
         console.mark("ok", "Transcript", f"{words:,} words")
         return
     console.mark("warn", "Transcript", f"{words:,} words, unusually long")
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    if on_terminal():
         try:
             answer = input("The merge will be slow and use a lot of your agent's quota. Continue? [Y/n] ")
         except (EOFError, KeyboardInterrupt):
@@ -379,11 +392,11 @@ def run_clean(args: argparse.Namespace, console: ui.Console) -> int:
     note_text = note.read_text(encoding="utf-8")
     output = clean_path(note)
     check_free(output, args.force)
-    preflight(paths.default_whisper_model(), [])  # no recording: nothing to transcribe
+    preflight(args, paths.default_whisper_model(), [])  # no recording: nothing to transcribe
     run_dir = make_run_dir(note.stem)
-    clean_note(note_text, output, run_dir, args, console)
+    cleaned = clean_note(note_text, output, run_dir, args, console)
     console.line()
-    console.summary([("Run", [_home(run_dir)], (ui.DIM,))])
+    console.summary([*tools_rows(cleaned.tools), ("Run", [_home(run_dir)], (ui.DIM,))])
     return 0
 
 
@@ -391,23 +404,42 @@ def clean_path(note: Path) -> Path:
     return note.with_name(f"{note.stem} (pulito).md")
 
 
-def clean_note(note_text: str, output: Path, run_dir: Path, args: argparse.Namespace, console: ui.Console) -> str:
-    """Clean the note with the agent and write the result to `output`; returns the cleaned text."""
-    with console.step("Clean", agent_detail(args)) as step:
-        reply = merge.run_claude(note_text, run_dir, args.effort, args.claude_model,
-                                 notify=lambda message: step.note("warn", message),
-                                 prompt=paths.CLEAN_PROMPT, file_prefix="clean-")
-        step.end("ok", step.detail, ui.duration(step.elapsed))
-    if not reply.endswith("\n"):
-        reply += "\n"
+def clean_note(note_text: str, output: Path, run_dir: Path, args: argparse.Namespace, console: ui.Console) -> merge.Reply:
+    """Clean the note with the agent and write the result to `output`; returns the agent's reply."""
+    cleaned = call_agent(console, "Clean", agent_detail(args), args, note_text, run_dir,
+                         prompt=paths.CLEAN_PROMPT, file_prefix="clean-")
+    reply = cleaned.text if cleaned.text.endswith("\n") else cleaned.text + "\n"
     stopping.check()
     write_output(output, reply, run_dir, args.force, "clean-reply.md")
     console.mark("ok", "Write", output.name)
+    return merge.Reply(reply, cleaned.tools)
+
+
+def call_agent(console: ui.Console, label: str, detail: str, args: argparse.Namespace, input_text: str, run_dir: Path,
+               **options) -> merge.Reply:
+    """One agent call as a checklist step, warning when the agent used a tool."""
+    with console.step(label, detail) as step:
+        reply = merge.run_agent(args.agent, input_text, run_dir, args.effort, args.model,
+                                notify=lambda message: step.note("warn", message), **options)
+        if reply.tools:
+            step.note("warn", f"the agent used {', '.join(reply.tools)}: check the note")
+        step.end("ok", step.detail, ui.duration(step.elapsed))
     return reply
 
 
+def tools_rows(tools: list[str]) -> list[tuple[str, list[str], tuple]]:
+    """The summary's warning about tools the agent used: what they brought in isn't from the lecture, and a
+    transcript may hold instructions that made the agent use them."""
+    if not tools:
+        return []
+    return [("Tools", [f"the agent used {', '.join(tools)}", "check the note for text that isn't from the lecture"],
+             (ui.YELLOW,))]
+
+
 def agent_detail(args: argparse.Namespace) -> str:
-    claude = f"claude {args.claude_model}" if args.claude_model else "claude"
+    if args.agent != "claude":
+        return f"{args.agent} {args.model}"
+    claude = f"claude {args.model}" if args.model else "claude"
     return f"{claude} · effort {args.effort}"
 
 
@@ -420,9 +452,16 @@ def dry_run(args: argparse.Namespace, course: courses.Course, note_text: str, ca
     if args.clean:
         print("(dry run) would first clean the note; the input below is the note as it is", file=sys.stderr)
     sys.stdout.write(merge.build_input(course, note_text, cached_transcript(args, caches)))
-    print(f"(dry run) would pipe this to: {shlex.join(merge.claude_command(args.effort, args.claude_model))}",
-          file=sys.stderr)
+    print_command(args, paths.MERGE_PROMPT)
     return 0
+
+
+def print_command(args: argparse.Namespace, prompt: Path) -> None:
+    print(f"(dry run) would pipe this to: {shlex.join(merge.command(args.agent, args.effort, args.model, prompt))}",
+          file=sys.stderr)
+    if args.agent == "antigravity":
+        print(f"(dry run) with the prompt {prompt.name} at its top, as one stream-json line, and HOME at a throwaway "
+              "folder holding rec2notes' settings (no tools), deleted afterwards", file=sys.stderr)
 
 
 def cached_transcript(args: argparse.Namespace, caches: list[Path]) -> str:
@@ -438,9 +477,30 @@ def cached_transcript(args: argparse.Namespace, caches: list[Path]) -> str:
     return transcribe.label_parts(parts)
 
 
-def preflight(model: str, caches: list[Path]) -> None:
-    """Fail before a long transcription, not after it."""
-    if problems := doctor.start_problems(model, caches):
+def on_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def confirm_agent(args: argparse.Namespace) -> None:
+    """Antigravity sends the note and transcript to Google: say so and ask once, on a terminal, before anything is
+    sent. The answer is saved in settings.toml."""
+    if args.agent != "antigravity" or menu.antigravity_agreed():
+        return
+    if not on_terminal():
+        raise Abort("Antigravity sends your note and transcript to Google: run rec2notes with --agent antigravity "
+                    "once in a terminal, or pick it in `rec2notes` → Settings, to read what that means and confirm it")
+    try:
+        agreed = menu.agree_to_antigravity(ui.Console(), input)
+    except menu.Quit:
+        agreed = False
+    if not agreed:
+        raise Abort("nothing was sent. To use Claude Code instead, pass --agent claude")
+
+
+def preflight(args: argparse.Namespace, model: str, caches: list[Path]) -> None:
+    """Fail before a long transcription, not after it; and ask before a first run with Antigravity."""
+    confirm_agent(args)
+    if problems := doctor.start_problems(args.agent, args.model, model, caches):
         raise Abort("cannot start:\n  - " + "\n  - ".join(problems))
 
 

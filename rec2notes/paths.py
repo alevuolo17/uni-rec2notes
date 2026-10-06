@@ -18,6 +18,7 @@ CREATE_PROMPT = PROMPTS / "create.md"
 SETUP = "rec2notes setup"  # the command, for the fix hints
 
 VAD_MODEL = "silero-v5.1.2"
+ANTIGRAVITY_MODEL = "gemini-3.8-flash-high"
 
 
 def default_whisper_model() -> str:
@@ -109,7 +110,9 @@ def save_setting(key: str, value: str | None) -> None:
 
 
 SETTING_ENV = {  # each setting's environment variable, which wins over the saved default
-    "claude_model": "REC2NOTES_CLAUDE_MODEL",
+    "agent": "REC2NOTES_AGENT",
+    "claude_model": "REC2NOTES_CLAUDE_MODEL",  # $REC2NOTES_MODEL, any agent's, wins over it
+    "antigravity_model": "REC2NOTES_MODEL",
     "effort": "REC2NOTES_EFFORT",
     "whisper_model": "REC2NOTES_WHISPER_MODEL",
 }
@@ -118,8 +121,14 @@ SETTING_ENV = {  # each setting's environment variable, which wins over the save
 def setting_choice(key: str) -> str | None:
     """What runs use: the setting's environment variable, else the saved default, else the built-in one (None for
     the Claude model: Claude Code's default)."""
-    built_in = {"claude_model": None, "effort": "high", "whisper_model": default_whisper_model()}[key]
+    built_in = {"agent": "claude", "claude_model": None, "antigravity_model": ANTIGRAVITY_MODEL, "effort": "high",
+                "whisper_model": default_whisper_model()}[key]
     return os.environ.get(SETTING_ENV[key]) or saved_settings().get(key) or built_in
+
+
+def model_choice(agent: str) -> str | None:
+    """The agent's model runs use: $REC2NOTES_MODEL, any agent's, wins over the agent's own setting."""
+    return os.environ.get("REC2NOTES_MODEL") or setting_choice(f"{agent}_model")
 
 
 def whisper_model_choice() -> str:

@@ -3,7 +3,7 @@ import os
 import shutil
 from unittest import mock
 
-from rec2notes import cli, courses, menu, paths, transcribe, ui
+from rec2notes import cli, courses, menu, merge, paths, transcribe, ui
 
 from .helpers import MODEL, Sandbox
 
@@ -86,9 +86,20 @@ class Hub(Sandbox):
         args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
         self.assertEqual((args.note, args.audio, args.course), (self.note, [self.audio], "net"))
         self.assertIn("Reti di calcolatori", out)
-        self.assertIn("Agent          claude", out)
+        self.assertIn("Agent          Claude Code", out)
         self.assertIn("Effort         high", out)
         self.assertIn("Model          Claude Code's default", out)
+
+    def test_with_antigravity_the_confirmation_has_no_effort_and_c_asks_no_effort(self):
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        paths.save_setting("antigravity_consent", "yes")
+        self.add_model("large-v3-turbo-q5_0")
+        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "c", "", "", "2", "")
+        self.assertIn("Agent          Antigravity", out)
+        self.assertIn(f"Model          {paths.ANTIGRAVITY_MODEL}", out)
+        self.assertNotIn("Effort", out)
+        self.assertEqual((args.agent, args.model, args.effort, args.whisper_model),
+                         ("antigravity", paths.ANTIGRAVITY_MODEL, None, "large-v3-turbo-q5_0"))
 
     def test_paths_are_cleaned_and_bad_ones_asked_again(self):
         args, out, _ = self.hub("1", "1", str(self.tmp / "nope.md"), f"'{self.note}'", "", f"{self.audio}".replace(" ", "\\ "), "", "", "y")
@@ -234,20 +245,20 @@ class Hub(Sandbox):
 
     def test_c_at_start_changes_the_settings_for_this_run_only(self):
         self.add_model("large-v3-turbo-q5_0")  # second after MODEL
-        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "c", "4", "1", "2", "")
-        self.assertEqual((args.claude_model, args.effort, args.whisper_model), ("haiku", "low", "large-v3-turbo-q5_0"))
+        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "c", "", "4", "1", "2", "")
+        self.assertEqual((args.model, args.effort, args.whisper_model), ("haiku", "low", "large-v3-turbo-q5_0"))
         self.assertIn("Model          haiku", out)
         self.assertIn("Effort         low", out)
         self.assertFalse(paths.settings_file().exists())
 
     def test_enter_keeps_each_setting_at_c(self):
-        args, _, _ = self.hub("1", "2", str(self.note.with_name("Lezione 2.md")), str(self.audio), "", "", "c", "", "", "", "")
-        self.assertEqual((args.claude_model, args.effort, args.whisper_model), (None, "high", MODEL))
+        args, _, _ = self.hub("1", "2", str(self.note.with_name("Lezione 2.md")), str(self.audio), "", "", "c", "", "", "", "", "")
+        self.assertEqual((args.model, args.effort, args.whisper_model), (None, "high", MODEL))
 
     def test_a_missing_whisper_model_is_shown_before_start_and_c_can_pick_a_downloaded_one(self):
         paths.whisper_model(MODEL).unlink()
         self.add_model("large-v3-turbo-q5_0")
-        args, out, prompts = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "", "c", "", "", "1", "")
+        args, out, prompts = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "", "c", "", "", "", "1", "")
         self.assertIn(f"Can't start yet:\n  - {paths.whisper_model(MODEL)} is missing", out)
         self.assertIn("Type c or n.", out)  # Enter doesn't start it
         self.assertIn("c to change settings, n to cancel: ", prompts)
@@ -311,8 +322,9 @@ class Hub(Sandbox):
     def test_settings_shows_the_folder(self):
         _, out, _ = self.hub("4", "x", "b", "q")
         self.assertIn(f"rec2notes folder  {self.folder}", out)
-        self.assertIn("Type c, m, e, w or b.", out)
-        self.assertIn("Claude model      Claude Code's default", out)
+        self.assertIn("Type c, a, m, e, w or b.", out)
+        self.assertIn("Agent             Claude Code", out)
+        self.assertIn("Model             Claude Code's default", out)
         self.assertIn("Effort            high", out)
         self.assertIn(f"Whisper model     {MODEL}", out)
 
@@ -323,7 +335,7 @@ class Hub(Sandbox):
                          {"claude_model": "opus", "effort": "max", "whisper_model": "large-v3-turbo-q5_0"})
         self.assertIn("Effort            max", out)
         args = cli.parse_args([str(self.note), str(self.audio)])
-        self.assertEqual((args.claude_model, args.effort, args.whisper_model), ("opus", "max", "large-v3-turbo-q5_0"))
+        self.assertEqual((args.model, args.effort, args.whisper_model), ("opus", "max", "large-v3-turbo-q5_0"))
 
     def test_settings_pickers_keep_the_current_value_on_enter(self):
         paths.save_setting("claude_model", "sonnet")
@@ -349,6 +361,66 @@ class Hub(Sandbox):
         os.environ["REC2NOTES_EFFORT"] = "low"
         _, out, _ = self.hub("4", "b", "q")
         self.assertIn("Effort            low  (from $REC2NOTES_EFFORT, which wins over this screen)", out)
+
+    def test_settings_shows_the_rows_of_the_chosen_agent(self):
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        _, out, _ = self.hub("4", "e", "b", "q")
+        self.assertIn("Agent             Antigravity  (from $REC2NOTES_AGENT, which wins over this screen)", out)
+        self.assertIn(f"Model             {paths.ANTIGRAVITY_MODEL}\n", out)
+        self.assertNotIn("Effort", out)
+        self.assertIn("Type c, a, m, w or b.", out)
+
+    def test_settings_says_when_rec2notes_model_wins_over_the_claude_model(self):
+        os.environ["REC2NOTES_MODEL"] = "opus"
+        os.environ["REC2NOTES_CLAUDE_MODEL"] = "haiku"
+        _, out, _ = self.hub("4", "b", "q")
+        self.assertIn("Model             opus  (from $REC2NOTES_MODEL, which wins over this screen)", out)
+
+    def test_picking_antigravity_explains_it_and_saves_a_yes(self):
+        _, out, _ = self.hub("4", "a", "2", "y", "b", "q")
+        self.assertIn("On personal accounts, those terms let Google use what you send", out)
+        self.assertEqual(paths.saved_settings(), {"agent": "antigravity", "antigravity_consent": "yes"})
+        self.assertIn("Agent             Antigravity", out)
+        _, out, _ = self.hub("4", "a", "1", "a", "2", "b", "q")  # agreed once: not asked again
+        self.assertNotIn("On personal accounts", out)
+        self.assertEqual(paths.saved_settings()["agent"], "antigravity")
+
+    def test_declining_antigravity_keeps_the_agent_and_saves_nothing(self):
+        _, out, _ = self.hub("4", "a", "2", "", "b", "q")
+        self.assertIn("Keeping Claude Code.", out)
+        self.assertEqual(paths.saved_settings(), {"agent": "claude"})
+
+    def test_the_agent_picker_says_which_agent_is_not_installed(self):
+        which = shutil.which
+        with mock.patch("shutil.which", lambda name, *a, **k: None if name == "agy" else which(name, *a, **k)):
+            _, out, _ = self.hub("4", "a", "", "b", "q")
+        self.assertIn("  2  Antigravity  (not installed: see https://antigravity.google/docs/cli", out)
+        self.assertNotIn("Claude Code  (not installed", out)
+
+    def test_antigravity_models_come_from_agy_and_the_default_is_not_saved(self):
+        paths.save_setting("agent", "antigravity")
+        _, out, prompts = self.hub("4", "m", "2", "b", "q")
+        self.assertIn(f"  1  {paths.ANTIGRAVITY_MODEL}  (rec2notes' default)\n  2  gemini-3.8-flash-low", out)
+        self.assertIn("[1] > ", prompts)
+        self.assertEqual(paths.saved_settings()["antigravity_model"], "gemini-3.8-flash-low")
+        self.hub("4", "m", "1", "b", "q")
+        self.assertNotIn("antigravity_model", paths.saved_settings())
+
+    def test_when_agy_cannot_list_its_models_a_typed_one_is_saved(self):
+        paths.save_setting("agent", "antigravity")
+        os.environ["FAKE_AGY_MODE"] = "hang"
+        with mock.patch.object(merge, "AGY_TIMEOUT", 1):
+            _, out, _ = self.hub("4", "m", "gemini-x-high", "b", "q")
+        self.assertIn("agy did not answer in 1 s", out)
+        self.assertEqual(paths.saved_settings()["antigravity_model"], "gemini-x-high")
+
+    def test_c_at_start_can_switch_to_antigravity_for_this_run(self):
+        args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "c", "2", "y", "2", "", "")
+        self.assertEqual((args.agent, args.model, args.effort), ("antigravity", "gemini-3.8-flash-low", None))
+        summaries = out.split("Agent          ")
+        self.assertTrue(summaries[-1].startswith("Antigravity"))
+        self.assertNotIn("Effort", summaries[-1])
+        self.assertEqual(paths.saved_settings(), {"antigravity_consent": "yes"})  # the agent only for this run
 
     def test_settings_points_to_a_moved_folder(self):
         moved = self.tmp / "moved" / "rec2notes"

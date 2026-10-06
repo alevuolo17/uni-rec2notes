@@ -1,6 +1,6 @@
 """setup: pick the rec2notes folder, install whisper.cpp and download the models into it.
 
-whisper.cpp is cloned and built on Linux, and unzipped from a pinned, checksummed release on Windows.
+whisper.cpp is cloned at a pinned tag and commit, and built, on Linux, and unzipped from a pinned, checksummed release on Windows.
 Run without options in a terminal, it shows the banner and asks before installing, then asks
 for the folder, the backend and the model; with options, or outside a terminal, it asks nothing.
 """
@@ -17,9 +17,10 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import Abort, courses, paths, stopping, ui
+from . import Abort, courses, merge, paths, stopping, ui
 
 REPO_URL = "https://github.com/ggml-org/whisper.cpp"
+WHISPER_CPP = ("b5130", "927cfce34f31707e17f2bff35c349632fb9e2c3a")  # the tag and commit Linux clones; the tag is WINDOWS_BUILDS' version
 # Hugging Face repos at pinned commits; models.sha256 lists every ggml-*.bin they hold with its SHA-256, as
 # https://huggingface.co/api/models/<repo>/tree/<commit> reports it (an LFS file's oid is its SHA-256).
 WHISPER_MODELS_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1"
@@ -42,22 +43,25 @@ MODELS = {  # the interactive menu; --whisper-model takes any whisper.cpp model 
 }
 CPU_MODEL = "large-v3-turbo"  # what setup fetches on the CPU backend, where large-v3 is too slow
 VULKAN_PACKAGES = "the Vulkan headers and loader, glslc, and the SPIR-V tools and headers (README, Setup)"
-CLAUDE = "claude (Claude Code)"
-REQUIRED_TOOLS = {
+AGENT_MENU = [("claude", "Claude Code, with a Claude subscription"),
+              ("antigravity", "Antigravity, with a Google account; your note and transcript go to Google")]
+REQUIRED_TOOLS = {  # and the chosen agent
     "cmake": ["cmake"],
     "git": ["git"],
     "make": ["make"],
     "a C++ compiler": ["c++", "g++", "clang++"],
     "ffmpeg": ["ffmpeg"],
-    CLAUDE: ["claude"],
 }
-WINDOWS_TOOLS = ("ffmpeg", CLAUDE)  # the prebuilt whisper.cpp needs no build tools
+WINDOWS_TOOLS = ("ffmpeg",)  # the prebuilt whisper.cpp needs no build tools
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="rec2notes setup", description="Install whisper.cpp and download the models into your rec2notes folder. "
                                                           "Safe to rerun. Without options, in a terminal, it asks for the folder, "
-                                                          "the backend and the model.")
+                                                          "the agent (if both are installed), the backend and the model.")
+    p.add_argument("--agent", choices=tuple(merge.AGENTS),
+                   help="the agent runs use (default: $REC2NOTES_AGENT, else the one installed; with both installed, "
+                        "the saved one, else claude)")
     p.add_argument("--backend", choices=BACKENDS,
                    help="vulkan: any GPU with a Vulkan driver; cuda: NVIDIA with the CUDA toolkit; cpu: no GPU; "
                         "auto: vulkan if glslc is installed, else cpu. On Windows: cpu or vulkan. "
@@ -67,13 +71,14 @@ def main(argv: list[str] | None = None) -> int:
                         f"saved one, else {CPU_MODEL} on the cpu backend, else {paths.default_whisper_model()})")
     args = p.parse_args(argv)
     try:
-        asking = args.backend is None and args.whisper_model is None and interactive()
+        asking = args.backend is None and args.whisper_model is None and args.agent is None and interactive()
         if asking:
             console = ui.Console()
             if console.banner():
                 print()
         check_not_elevated()
-        check_tools()
+        agent = args.agent or os.environ.get("REC2NOTES_AGENT") or only_agent_installed()
+        check_tools(agent)
         if asking:
             if not confirm("Install rec2notes on this computer?"):
                 print("Nothing installed.")
@@ -81,6 +86,14 @@ def main(argv: list[str] | None = None) -> int:
             use_folder(ask_folder(paths.pointed_folder() or paths.default_folder()))
         else:
             use_folder(paths.pointed_folder() or paths.default_folder())
+        if agent is None:  # both installed
+            agent = choose_agent(console if asking else None)
+        elif not args.agent and not os.environ.get("REC2NOTES_AGENT"):
+            print(f"Agent: {merge.AGENTS[agent].label}, the one installed; `rec2notes` → Settings changes it.")
+        switch = True  # without questions, an unpinned clone moves to the pinned commit
+        if asking and not paths.WINDOWS and (current := clone_commit()) not in (None, WHISPER_CPP[1]):
+            switch = confirm(f"whisper.cpp in {paths.whisper_dir()} is at {current[:9]}, not rec2notes' pinned "
+                             f"{WHISPER_CPP[0]}. Switch to {WHISPER_CPP[0]} and rebuild?")
         installed = installed_backend()
         backend = args.backend or installed or ("cpu" if paths.WINDOWS else "auto")
         if asking:
@@ -98,10 +111,11 @@ def main(argv: list[str] | None = None) -> int:
                 install_prebuilt(backend)
                 download_models(model)
             else:
-                clone()
+                clone(switch)
                 download_models(model)
                 build(backend)
             paths.save_setting("whisper_model", model)
+            paths.save_setting("agent", agent)
             ensure_folders_file()
         print(f"\nSetup complete. rec2notes folder: {paths.folder()}")
         if (env := os.environ.get("REC2NOTES_WHISPER_MODEL")) and env != model:
@@ -167,16 +181,16 @@ def use_folder(folder: Path) -> None:
     print(f"rec2notes folder: {folder}")
 
 
-def pick(console: ui.Console, title: str, options: list[tuple[str, str]], default: str) -> str:
-    """Ask for one of the (name, description) options by number; Enter takes the default."""
+def pick(console: ui.Console, title: str, options: list[tuple[str, str]], default: str | None) -> str:
+    """Ask for one of the (name, description) options by number; Enter takes the default, if there is one."""
     print(f"\n{console.style(title, ui.BOLD)}")
     width = max(len(name) for name, _ in options)
     for number, (name, description) in enumerate(options, 1):
         print(f"  {number}) {name:<{width}}  {console.style(description, ui.DIM)}")
     names = [name for name, _ in options]
     while True:
-        answer = input(f"Choose 1-{len(options)} [{names.index(default) + 1}]: ").strip()
-        if not answer:
+        answer = input(f"Choose 1-{len(options)}" + ("" if default is None else f" [{names.index(default) + 1}]") + ": ").strip()
+        if not answer and default is not None:
             return default
         if answer.isdigit() and 1 <= int(answer) <= len(options):
             return names[int(answer) - 1]
@@ -225,19 +239,42 @@ def check_not_elevated() -> None:
                     "and needs no root; only the OS packages in the README need sudo.")
 
 
-def check_tools() -> None:
+def only_agent_installed() -> str | None:
+    """The agent installed, when there is one; None for both or none."""
+    installed = [name for name, agent in merge.AGENTS.items() if shutil.which(agent.program)]
+    return installed[0] if len(installed) == 1 else None
+
+
+def choose_agent(console: ui.Console | None) -> str:
+    """With both agents installed: the user's pick in a terminal (`console`), the saved one pre-selected; off a
+    terminal the saved one, else claude."""
+    saved = paths.saved_settings().get("agent")
+    saved = saved if saved in merge.AGENTS else None
+    if console is None:
+        return saved or "claude"
+    return pick(console, "Agent, the AI that writes the notes", AGENT_MENU, saved)
+
+
+def check_tools(agent: str | None) -> None:
+    """The build tools, ffmpeg and `agent`; None means any agent, as with both installed."""
+    if agent is not None and agent not in merge.AGENTS:
+        raise Abort(f"unknown agent {agent!r}: use one of {', '.join(merge.AGENTS)}")
     required = {what: REQUIRED_TOOLS[what] for what in WINDOWS_TOOLS} if paths.WINDOWS else REQUIRED_TOOLS
     missing = [what for what, names in required.items() if not any(shutil.which(n) for n in names)]
+    wanted = [merge.AGENTS[agent]] if agent else list(merge.AGENTS.values())
+    agent_missing = not any(shutil.which(a.program) for a in wanted)
+    if agent_missing:
+        missing.append(" or ".join(f"{a.program} ({a.label})" for a in wanted))
     if not missing:
         return
     message = f"missing: {', '.join(missing)}."
     if paths.WINDOWS and "ffmpeg" in missing:
         message += " Install ffmpeg with `winget install Gyan.FFmpeg`, then open a new terminal."
-    elif any(what != CLAUDE for what in missing):
+    elif any(what in REQUIRED_TOOLS for what in missing):
         message += (" Install them with your distribution's package manager (the README lists the packages);"
                     " setup does not install packages.")
-    if CLAUDE in missing:
-        message += " Claude Code is not a distribution package: see https://claude.com/claude-code, and make sure `claude` is on PATH."
+    if agent_missing:
+        message += "".join(f" {a.label} is not a distribution package: {a.install_hint()}." for a in wanted)
     raise Abort(message)
 
 
@@ -275,15 +312,49 @@ def cmake_flags(backend: str) -> list[str]:
             f"-DGGML_CUDA={'ON' if backend == 'cuda' else 'OFF'}"]
 
 
-def clone() -> None:
+def clone(switch: bool = True) -> None:
+    """Clone whisper.cpp's pinned tag, or move an existing clone to it when `switch`; either way the commit must be
+    the pinned one, as a tag can be moved. An existing clone is switched in place: its ignored models and build stay."""
+    tag, commit = WHISPER_CPP
     target = paths.whisper_dir()
-    if (target / ".git").is_dir():
-        print(f"whisper.cpp: already cloned in {target}")
+    current = clone_commit()
+    if current == commit:
+        print(f"whisper.cpp: {tag} already cloned in {target}")
+        return
+    if current and not switch:
+        print(f"whisper.cpp: kept at {current[:9]}, not the pinned {tag}; rerun setup and answer yes to switch")
+        return
+    if current:
+        print(f"whisper.cpp: switching {target} from {current[:9]} to {tag}")
+        _run(["git", "fetch", "--depth", "1", REPO_URL, f"refs/tags/{tag}"], cwd=target)  # not origin, which may be changed
+        _check_commit(_git("rev-parse", "FETCH_HEAD^{commit}"), target, remove=False)
+        _run(["git", "-c", "advice.detachedHead=false", "checkout", "--detach", commit], cwd=target)
         return
     if target.exists() and any(target.iterdir()):
         raise Abort(f"{target} exists but is not a git clone; move it away and rerun setup")
     target.parent.mkdir(parents=True, exist_ok=True)
-    _run(["git", "clone", REPO_URL, str(target)])
+    _run(["git", "-c", "advice.detachedHead=false", "clone", "--depth", "1", "--branch", tag, REPO_URL, str(target)])
+    _check_commit(clone_commit(), target, remove=True)
+
+
+def clone_commit() -> str | None:
+    """The commit the whisper.cpp clone is at, or None without a clone."""
+    return _git("rev-parse", "HEAD") if (paths.whisper_dir() / ".git").is_dir() else None
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(["git", *args], cwd=paths.whisper_dir(), stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+
+
+def _check_commit(got: str | None, target: Path, remove: bool) -> None:
+    """Stop unless `got` is the pinned commit; a fresh clone, which holds no models yet, is deleted."""
+    tag, commit = WHISPER_CPP
+    if got == commit:
+        return
+    if remove:
+        shutil.rmtree(target)
+    raise Abort(f"whisper.cpp's {tag} is commit {got}, not the pinned {commit}: the tag was moved. "
+                + ("Deleted the clone." if remove else f"{target} is left as it was."))
 
 
 def install_prebuilt(backend: str) -> None:

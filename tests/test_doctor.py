@@ -1,7 +1,7 @@
 import os
 from unittest import mock
 
-from rec2notes import doctor, paths
+from rec2notes import doctor, merge, paths
 
 from .helpers import MODEL, Sandbox
 from .test_menu import Hub
@@ -41,6 +41,23 @@ class Doctor(Sandbox):
         self.assertIn("then run `rec2notes doctor` again", out)
         self.assertIn("claude auth login", out)
         self.assertEqual(self.calls("claude"), [])  # `auth status` is not a merge call
+
+    def test_checks_antigravity_when_it_is_the_agent(self):
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        code, out, _ = self.rec2notes("doctor")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"✓ Antigravity +.*agy")
+        self.assertRegex(out, r"✓ Antigravity login +signed in")
+        self.assertNotIn("Claude", out)
+        self.assertEqual(self.calls("agy"), [])  # `agy models` sends no prompt
+
+    def test_a_signed_out_antigravity_fails_with_the_fix(self):
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        os.environ["FAKE_AGY_MODE"] = "hang"
+        with mock.patch.object(merge, "AGY_TIMEOUT", 1):
+            code, out, _ = self.rec2notes("doctor")
+        self.assertEqual(code, 1)
+        self.assertIn("agy did not answer in 1 s: not signed in, or no network; run `agy` once and sign in", out)
 
     def test_missing_model_names_the_setup_command(self):
         paths.whisper_model(MODEL).unlink()

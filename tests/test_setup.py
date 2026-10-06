@@ -4,7 +4,9 @@ import hashlib
 import http.server
 import io
 import os
+import shutil
 import signal
+import subprocess
 import threading
 import unittest
 import zipfile
@@ -258,6 +260,97 @@ class Prebuilt(Served):
         self.assertEqual(sorted(p.name for p in paths.whisper_dir().iterdir()), ["models"])
 
 
+class Clone(Sandbox):
+    """The pinned clone, with real git against a local repository: offline."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.make_writable)  # runs before the Sandbox deletes tmp
+        self.source = self.tmp / "upstream"
+        self.source.mkdir()
+        self.git(self.source, "init", "-q")
+        (self.source / ".gitignore").write_text("*.bin\n")
+        self.pinned = self.commit("pinned")
+        self.git(self.source, "tag", "b5130")
+        self.newer = self.commit("newer")
+        for name, value in (("REPO_URL", self.source.as_uri()), ("WHISPER_CPP", ("b5130", self.pinned))):
+            patcher = mock.patch.object(setup, name, value)  # file://, so --depth isn't ignored as for a local path
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.target = paths.whisper_dir()
+        shutil.rmtree(self.target)  # the Sandbox's models: a first setup clones before downloading them
+
+    def make_writable(self):
+        """git's objects are read-only, which Windows refuses to delete."""
+        for folder, _, files in os.walk(self.tmp):
+            for name in files:
+                os.chmod(os.path.join(folder, name), 0o600)
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args], cwd=cwd,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, message):
+        (self.source / "file.txt").write_text(message)
+        self.git(self.source, "add", "-A")
+        self.git(self.source, "commit", "-q", "-m", message)
+        return self.git(self.source, "rev-parse", "HEAD")
+
+    def clone(self, switch=True):
+        """setup.clone with git's own output silenced; returns what setup printed."""
+        out = io.StringIO()
+        with open(os.devnull, "w") as null, mock.patch.object(subprocess, "Popen",
+                                                              functools.partial(subprocess.Popen, stdout=null, stderr=null)), \
+                contextlib.redirect_stdout(out):
+            setup.clone(switch)
+        return out.getvalue()
+
+    def test_a_fresh_clone_is_the_pinned_commit_only(self):
+        self.clone()
+        self.assertEqual(setup.clone_commit(), self.pinned)
+        self.assertEqual(self.git(self.target, "rev-parse", "--is-shallow-repository"), "true")
+
+    @unittest.skipIf(paths.WINDOWS, "only Linux clones, and rmtree can't delete git's read-only objects on Windows")
+    def test_a_moved_tag_is_refused_and_the_clone_deleted(self):
+        self.git(self.source, "tag", "-f", "b5130", self.newer)
+        with self.assertRaisesRegex(Abort, f"commit {self.newer}, not the pinned {self.pinned}: the tag was moved"):
+            self.clone()
+        self.assertFalse(self.target.exists())
+
+    def existing_clone_at_newer(self):
+        self.git(self.tmp, "clone", "-q", self.source.as_uri(), str(self.target))
+        (self.target / "models").mkdir()
+        (self.target / "models" / "ggml-x.bin").write_text("model")
+
+    def test_an_existing_clone_switches_to_the_pin_and_keeps_its_models(self):
+        self.existing_clone_at_newer()
+        out = self.clone()
+        self.assertIn(f"switching {self.target} from {self.newer[:9]} to b5130", out)
+        self.assertEqual(setup.clone_commit(), self.pinned)
+        self.assertEqual((self.target / "models" / "ggml-x.bin").read_text(), "model")
+
+    def test_a_switch_to_a_moved_tag_leaves_the_clone(self):
+        self.existing_clone_at_newer()
+        self.git(self.source, "tag", "-f", "b5130", self.newer)
+        with self.assertRaisesRegex(Abort, "the tag was moved. .* is left as it was"):
+            self.clone()
+        self.assertEqual(setup.clone_commit(), self.newer)
+
+    def test_a_clone_at_the_pin_is_kept(self):
+        self.clone()
+        self.assertIn("b5130 already cloned", self.clone())
+
+    def test_an_unpinned_clone_is_kept_when_not_switching(self):
+        self.existing_clone_at_newer()
+        self.assertIn(f"kept at {self.newer[:9]}, not the pinned b5130; rerun setup and answer yes", self.clone(False))
+        self.assertEqual(setup.clone_commit(), self.newer)
+
+
+class PinnedVersions(unittest.TestCase):
+    def test_linux_clones_the_version_windows_unzips(self):
+        self.assertEqual(setup.WHISPER_CPP[0], setup.WINDOWS_BUILDS["cpu"][0])
+
+
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -295,6 +388,54 @@ class QuestionsMixin:
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             code = setup.main(list(args))
         return code, out.getvalue(), [call.args[0] for call in asked.call_args_list]
+
+    def test_the_chosen_agent_is_required(self):
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        code, out, _ = self.setup(answers=[])
+        self.assertEqual(code, 1)
+        self.assertIn("missing: agy (Antigravity). Antigravity is not a distribution package: "
+                      "see https://antigravity.google/docs/cli, and make sure `agy` is on PATH.", out)
+
+    def test_the_agent_flag_is_required_too(self):
+        code, out, _ = self.setup("--agent", "antigravity", answers=[])
+        self.assertEqual(code, 1)
+        self.assertIn("missing: agy (Antigravity).", out)
+
+    def test_the_only_agent_installed_is_used_and_saved_without_asking(self):
+        (self.tmp / "bin" / f"claude{EXE}").unlink()
+        self.add_tool("agy")
+        code, out, asked = self.setup(answers=["", "", "", ""])
+        self.assertEqual(code, 0, out)
+        self.assertIn("Agent: Antigravity, the one installed; `rec2notes` → Settings changes it.", out)
+        self.assertFalse(any("Agent, the AI" in a for a in asked))
+        self.assertEqual(paths.saved_settings()["agent"], "antigravity")
+
+    def test_with_both_agents_installed_the_user_picks_one(self):
+        self.add_tool("agy")
+        code, out, asked = self.setup(answers=["", "", "", "2", "", ""])
+        self.assertEqual(code, 0, out)
+        self.assertIn("Agent, the AI that writes the notes", out)
+        self.assertEqual(asked[2:4], ["Choose 1-2: ", "Choose 1-2: "])  # nothing pre-selected: Enter asks again
+        self.assertEqual(paths.saved_settings()["agent"], "antigravity")
+        code, _, asked = self.setup(answers=["", "", "", "", ""])  # a rerun pre-selects the saved one
+        self.assertEqual((code, asked[2]), (0, "Choose 1-2 [2]: "))
+
+    def test_with_both_agents_and_no_terminal_the_saved_one_else_claude(self):
+        self.add_tool("agy")
+        self.patch("interactive", return_value=False)
+        self.assertEqual(self.setup(answers=[])[0], 0)
+        self.assertEqual(paths.saved_settings()["agent"], "claude")
+        paths.save_setting("agent", "antigravity")
+        self.setup(answers=[])
+        self.assertEqual(paths.saved_settings()["agent"], "antigravity")
+
+    def test_with_no_agent_installed_both_are_named(self):
+        (self.tmp / "bin" / f"claude{EXE}").unlink()
+        code, out, _ = self.setup(answers=[])
+        self.assertEqual(code, 1)
+        self.assertIn("claude (Claude Code) or agy (Antigravity)", out)
+        self.assertIn("Claude Code is not a distribution package: see https://claude.com/claude-code", out)
+        self.assertIn("Antigravity is not a distribution package: see https://antigravity.google/docs/cli", out)
 
     def test_no_installs_nothing(self):
         paths.pointer_file().unlink()
@@ -415,6 +556,30 @@ class Questions(QuestionsMixin, SetupSandbox):
         self.assertEqual((code, asked), (0, []))
         self.steps["build"].assert_called_once_with("cpu")
 
+    def test_an_unpinned_clone_asks_to_switch(self):
+        self.patch("clone_commit", return_value="d09f61a708f3487afa956ff578e60eae5e7a233c")
+        code, _, asked = self.setup(answers=["", "", "", "", ""])
+        self.assertEqual(code, 0)
+        self.assertIn(f"whisper.cpp in {paths.whisper_dir()} is at d09f61a70, not rec2notes' pinned b5130. "
+                      "Switch to b5130 and rebuild? [Y/n] ", asked)
+        self.steps["clone"].assert_called_once_with(True)
+
+    def test_no_keeps_an_unpinned_clone(self):
+        self.patch("clone_commit", return_value="d09f61a708f3487afa956ff578e60eae5e7a233c")
+        self.setup(answers=["", "", "n", "", ""])
+        self.steps["clone"].assert_called_once_with(False)
+
+    def test_a_pinned_clone_asks_nothing_more(self):
+        self.patch("clone_commit", return_value=setup.WHISPER_CPP[1])
+        code, _, asked = self.setup(answers=["", "", "", ""])
+        self.assertEqual((code, len(asked)), (0, 4))
+        self.steps["clone"].assert_called_once_with(True)
+
+    def test_without_questions_an_unpinned_clone_switches(self):
+        self.patch("clone_commit", return_value="d09f61a708f3487afa956ff578e60eae5e7a233c")
+        self.setup("--whisper-model", "tiny", answers=[])
+        self.steps["clone"].assert_called_once_with(True)
+
     def built_with(self, backend):
         cache = paths.whisper_dir() / "build" / "CMakeCache.txt"
         cache.parent.mkdir(parents=True)
@@ -461,6 +626,11 @@ class QuestionsOnWindows(QuestionsMixin, SetupSandbox):
         for step in ("clone", "build"):
             self.steps[step].assert_not_called()
         self.assertNotIn("REC2NOTES_WHISPER_MODEL", out)  # turbo is already the default there
+
+    def test_no_clone_question(self):
+        self.patch("clone_commit", return_value="d09f61a708f3487afa956ff578e60eae5e7a233c")
+        code, _, asked = self.setup(answers=["", "", "", ""])
+        self.assertEqual((code, len(asked)), (0, 4))
 
     def test_only_ffmpeg_and_claude_are_required(self):
         for ffmpeg in (self.tmp / "bin").glob("ffmpeg*"):
