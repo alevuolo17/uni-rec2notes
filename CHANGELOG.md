@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2 (2026-10-07)
+
+- Keep MCP servers out of claude calls with --strict-mcp-config
+
 ## 0.4.1 (2026-10-07)
 
 - runs: delete run folders after 30 days, and say what is kept

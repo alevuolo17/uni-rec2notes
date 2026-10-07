@@ -98,7 +98,8 @@ class Output(Sandbox):
 
     def test_claude_command_line(self):
         self.assertEqual(self.rec2notes(self.note, self.audio)[0], 0)
-        self.assertEqual(self.calls("claude"), [["-p", "--effort", "high", "--tools", "", "--no-session-persistence",
+        self.assertEqual(self.calls("claude"), [["-p", "--effort", "high", "--tools", "", "--strict-mcp-config",
+                                                 "--no-session-persistence",
                                                  "--system-prompt-file", str(paths.MERGE_PROMPT)]])
 
     def test_claude_model_and_effort_can_be_overridden(self):
@@ -197,7 +198,8 @@ class Clean(Sandbox):
 
     def test_clean_command_line(self):
         self.assertEqual(self.rec2notes("clean", self.note, "--effort", "low", "--claude-model", "opus")[0], 0)
-        self.assertEqual(self.calls("claude"), [["-p", "--effort", "low", "--tools", "", "--no-session-persistence",
+        self.assertEqual(self.calls("claude"), [["-p", "--effort", "low", "--tools", "", "--strict-mcp-config",
+                                                 "--no-session-persistence",
                                                  "--system-prompt-file", str(paths.CLEAN_PROMPT), "--model", "opus"]])
 
     def test_clean_command_refuses_when_the_sibling_exists_unless_forced(self):
@@ -304,7 +306,8 @@ class Create(Sandbox):
 
     def test_claude_command_line_and_input(self):
         self.assertEqual(self.rec2notes("create", self.created, self.audio, "--length", "10", "--effort", "max")[0], 0)
-        self.assertEqual(self.calls("claude"), [["-p", "--effort", "max", "--tools", "", "--no-session-persistence",
+        self.assertEqual(self.calls("claude"), [["-p", "--effort", "max", "--tools", "", "--strict-mcp-config",
+                                                 "--no-session-persistence",
                                                  "--system-prompt-file", str(paths.CREATE_PROMPT)]])
         sent = (self.run_dirs()[0] / "input.txt").read_text(encoding="utf-8")
         self.assertRegex(sent, r"^<course>\nname: Reti di calcolatori\nvocab: .*\n</course>\n\n"

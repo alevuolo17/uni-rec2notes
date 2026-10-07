@@ -70,7 +70,9 @@ def command(agent: str, effort: str | None, model: str | None, prompt: Path = pa
 
 
 def claude_command(effort: str, model: str | None, prompt: Path = paths.MERGE_PROMPT) -> list[str]:
-    cmd = ["claude", "-p", "--effort", effort, "--tools", "", "--no-session-persistence",
+    """--tools "" removes the built-in tools only: --strict-mcp-config, with no --mcp-config, also keeps out every
+    MCP server, the claude.ai connectors included (they can write to the user's accounts)."""
+    cmd = ["claude", "-p", "--effort", effort, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
            "--system-prompt-file", str(prompt)]
     if model:
         cmd += ["--model", model]
