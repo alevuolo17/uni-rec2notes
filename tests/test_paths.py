@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 import unittest
@@ -38,7 +39,9 @@ class Folder(Sandbox):
         self.assertEqual(paths.folders_file(), self.folder / "folders.toml")
         self.assertEqual(paths.whisper_model("large-v3"), self.folder / "whisper.cpp" / "models" / "ggml-large-v3.bin")
         self.assertEqual(paths.runs_dir(), self.folder / "cache" / "runs")
-        self.assertEqual(paths.transcript_cache("m", "abc"), self.folder / "cache" / "transcripts" / "m" / "abc.txt")
+        vocab_sha = hashlib.sha256(b"Reti TCP").hexdigest()[:16]
+        self.assertEqual(paths.transcript_cache("m", "abc", " Reti\n TCP "),  # spaces as Whisper's --prompt gets it
+                         self.folder / "cache" / "transcripts" / "m" / f"abc-{vocab_sha}.txt")
 
     def test_the_pointer_keeps_backslashes_in_single_quotes(self):
         folder = Path(r"C:\Users\x\rec2notes" if paths.WINDOWS else r"/a/b\n")  # a basic string would read \n

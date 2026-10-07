@@ -1,5 +1,6 @@
 """Where things live: files in this package, the user's rec2notes folder and its pointer, and programs."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -171,8 +172,10 @@ def cache_dir() -> Path:
     return folder() / "cache"
 
 
-def transcript_cache(model: str, sha256: str) -> Path:
-    return cache_dir() / "transcripts" / model / f"{sha256}.txt"
+def transcript_cache(model: str, sha256: str, vocab: str) -> Path:
+    """The vocabulary is Whisper's prompt, so it changes the transcript: a course whose vocab was edited gets a new one."""
+    vocab_sha = hashlib.sha256(" ".join(vocab.split()).encode("utf-8")).hexdigest()
+    return cache_dir() / "transcripts" / model / f"{sha256}-{vocab_sha[:16]}.txt"
 
 
 def runs_dir() -> Path:

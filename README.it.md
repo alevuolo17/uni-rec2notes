@@ -7,7 +7,7 @@
 
 <p align="center">
   <b>Completa i tuoi appunti con la registrazione della lezione.</b><br>
-  Trascrizione locale con Whisper · un merge con Claude Code o Antigravity · lacune colmate, errori segnalati, le tue parole mai riscritte.
+  Trascrizione locale con Whisper · un merge con Claude Code o Antigravity · lacune colmate, errori segnalati, il tuo testo intatto e verificato.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 Registri ogni lezione, ma nessuno riascolta 90 minuti di audio per sistemare gli appunti.
 **Lo fa rec2notes al posto tuo.** Trascrive la registrazione sul tuo computer, poi fa sì che un agente AI, Claude Code o Antigravity di Google,
 colmi le lacune dei tuoi appunti, segnali quello che hai scritto male ed elenchi quello che ti sei perso,
-senza riscrivere una sola parola tua.
+senza cambiare niente di quello che hai scritto: rec2notes controlla che ogni parola, simbolo e a capo dei tuoi appunti ci sia ancora.
 
 - ✍️ **Lacune colmate**, nello stile dei tuoi appunti: la definizione che non hai preso, il passaggio che hai saltato, i tuoi `[?]`.
 - ⚖️ **Errori segnalati, non corretti**: la tua frase resta, con una nota a piè di pagina che dice cosa è stato detto e quando, così decidi tu.
@@ -179,7 +179,7 @@ Infine, la cartella che contiene gli appunti del corso. Quando gli appunti sono 
 4. **Di quale corso si tratta?** Se gli appunti sono nella cartella di uno dei tuoi corsi, quel corso è già segnato e Invio lo sceglie.
 5. **Un riepilogo**: corso, appunti, registrazione, e l'agente con il suo modello ed effort, e il modello Whisper. Invio avvia; `c` cambia modelli ed effort per questa esecuzione. Tutto ciò che fermerebbe l'esecuzione, come un modello Whisper non scaricato, è elencato qui, prima che parta.
 
-Ottieni `<appunti> (completo).md` accanto ai tuoi appunti. Cerca le note `[^conflitto-N]`, dove i tuoi appunti e la lezione non coincidono, e la sezione *Argomenti non presenti negli appunti* in fondo. Se qualche tua parola è andata persa, il terminale le elenca; un `[?]` completato è normale che compaia lì.
+Ottieni `<appunti> (completo).md` accanto ai tuoi appunti. Cerca le note `[^conflitto-N]`, dove i tuoi appunti e la lezione non coincidono, e la sezione *Argomenti non presenti negli appunti* in fondo. Se qualcosa che hai scritto è andato perso o è cambiato, il terminale lo elenca; un segnaposto completato dall'agente, come "da completare", è normale che compaia lì. Quello che l'agente ha aggiunto non è segnato, quindi rileggi gli appunti prima di fidarti.
 
 ### Creare appunti da una registrazione
 
@@ -207,6 +207,7 @@ Ogni esecuzione accetta anche `--course`, `--whisper-model`, `--agent`, `--model
 ## Privacy e sicurezza
 
 - **La trascrizione resta sul tuo computer**: la registrazione non lo lascia mai.
+- **Cosa tiene rec2notes.** Ogni esecuzione tiene una copia degli appunti, della trascrizione e della risposta dell'agente in `cache/runs` nella cartella di rec2notes (e il tuo vecchio file `(completo)`, quando `--force` l'ha sostituito), per 30 giorni: la prima esecuzione dopo li cancella. Le trascrizioni restano in `cache/transcripts`, così rieseguire non trascrive di nuovo, fino a `rec2notes uninstall`.
 - **Gli appunti vanno al tuo agente.** Un merge, `clean` o `create` invia gli appunti, la trascrizione e il nome e il vocabolario del corso ad Anthropic (Claude Code) o a Google (Antigravity), alle condizioni del tuo account. Con gli account Google personali, le condizioni di Antigravity permettono a Google di usare ciò che invii per migliorare i suoi modelli; rec2notes disattiva la telemetria di Antigravity, ma Google non ha detto che basti. La prima esecuzione con Antigravity chiede prima di inviare qualsiasi cosa.
 - **Chiedi prima di registrare.** Alcuni professori non permettono di registrare la lezione, o di condividerne la registrazione o la trascrizione.
 - **L'agente non ha strumenti**: niente file, niente comandi, niente web. Claude Code gira con `--tools ""`. Antigravity gira in una cartella usa e getta con impostazioni che negano ogni strumento, cancellata dopo ogni chiamata, ma la sua ricerca web non si può disattivare: quando l'agente l'ha usata, l'esecuzione ti avvisa. Controlla quegli appunti: ciò che ha cercato non viene dalla lezione, e una trascrizione potrebbe contenere istruzioni rivolte all'agente.

@@ -51,6 +51,15 @@ class Transcription(Sandbox):
         self.assertIn("cached", out)
         self.assertIn("[00:01:01] seconda frase", self.input_text())
 
+    def test_an_edited_vocab_gets_its_own_transcript(self):
+        self.assertEqual(self.rec2notes(self.note, self.audio)[0], 0)
+        self.assertEqual(self.rec2notes("course", "edit", "net", "--vocab", "Lezione di reti: TCP, UDP.")[0], 0)
+        code, out, err = self.rec2notes(self.note, self.audio, "--force")
+        self.assertEqual(code, 0, err)
+        first, second = self.calls("whisper")
+        self.assertEqual(second[second.index("--prompt") + 1], "Lezione di reti: TCP, UDP.")
+        self.assertNotIn("cached", out)
+
     def test_another_model_gets_its_own_transcript(self):
         other = "large-v3-turbo-q5_0"
         self.add_model(other)
@@ -60,9 +69,8 @@ class Transcription(Sandbox):
         first, second = self.calls("whisper")
         self.assertEqual(first[first.index("-m") + 1], str(paths.whisper_model(MODEL)))
         self.assertEqual(second[second.index("-m") + 1], str(paths.whisper_model(other)))
-        sha = transcribe.sha256_file(self.audio)
-        self.assertTrue(paths.transcript_cache(MODEL, sha).exists())
-        self.assertTrue(paths.transcript_cache(other, sha).exists())
+        self.assertTrue(self.transcript_cache(MODEL).exists())
+        self.assertTrue(self.transcript_cache(other).exists())
 
     def test_whisper_gets_the_lessons_learned_flags(self):
         self.assertEqual(self.rec2notes(self.note, self.audio)[0], 0)

@@ -17,7 +17,7 @@ class UninstallTest(Sandbox):
         return code, out.getvalue(), [call.args[0] for call in asked.call_args_list]
 
     def test_yes_deletes_the_folder_and_the_pointer_and_leaves_the_notes(self):
-        cached = paths.transcript_cache(MODEL, "abc")
+        cached = paths.transcript_cache(MODEL, "abc", "Lezione di reti.")
         cached.parent.mkdir(parents=True)
         cached.write_text("trascrizione\n", encoding="utf-8")
         paths.save_setting("whisper_model", MODEL)

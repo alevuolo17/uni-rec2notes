@@ -98,6 +98,17 @@ class Banner(unittest.TestCase):
         with mock.patch.dict(os.environ, {"COLORTERM": ""}):
             self.assertIn("\x1b[38;5;221m██████", self.header(120))
 
+    def test_no_color_prints_it_plain(self):
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            out = self.header(120)
+        self.assertIn("░██████", out)
+        self.assertNotIn("\x1b[", out)
+
+
+@mock.patch.dict(os.environ, {"TERM": "xterm", "COLORTERM": "truecolor", "NO_COLOR": ""})
+class Help(Sandbox):
+    """`rec2notes` and `-h` run the real `cli.main`, which loads the saved language: only in a Sandbox."""
+
     def run_cli(self, *args):
         out = Terminal()
         # stdin is not a terminal, or a bare `rec2notes` opens the menu and waits on the real one
@@ -121,12 +132,6 @@ class Banner(unittest.TestCase):
         self.assertEqual(code, 0)
         plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
         self.assertLess(plain.index("██████"), plain.index("usage: rec2notes"))
-
-    def test_no_color_prints_it_plain(self):
-        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
-            out = self.header(120)
-        self.assertIn("░██████", out)
-        self.assertNotIn("\x1b[", out)
 
 
 class NotOnATerminal(unittest.TestCase):

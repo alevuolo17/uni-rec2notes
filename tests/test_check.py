@@ -35,13 +35,35 @@ Il three-way handshake si compone di tre messaggi.[^conflitto-1] Serve a sincron
 
     def test_deleted_passage_is_reported(self):
         reply = NOTE.replace("- Se il server non risponde: [?]\n", "")
-        self.assertEqual(check.missing_passages(NOTE, reply), [check.Change("Se il server non risponde", "")])
+        self.assertEqual(check.missing_passages(NOTE, reply), [check.Change("- Se il server non risponde:", "")])
 
     def test_text_moved_into_a_footnote_is_reported(self):
         reply = NOTE.replace("Serve a sincronizzare i *sequence number*[^1].", "[^1]") + "[^2]: Serve a sincronizzare i sequence number.\n"
         changes = check.missing_passages(NOTE, reply)
-        self.assertEqual([c.note for c in changes], ["Serve a sincronizzare i *sequence number"])
+        self.assertEqual([c.note for c in changes], ["Serve a sincronizzare i *sequence number*."])
 
+
+    def test_a_changed_symbol_is_reported(self):
+        note = "TCP è affidabile: $a + b$.\n"
+        self.assertEqual(check.missing_passages(note, note.replace("+", "-")), [check.Change("+", "-")])
+
+    def test_a_flattened_heading_and_list_are_reported(self):
+        changes = check.missing_passages("# Titolo\n\n- uno\n- due\n", "Titolo uno due\n")
+        self.assertEqual([c.note for c in changes], ["#", "-", "-"])
+
+    def test_joined_lines_are_reported_but_blank_lines_and_indentation_are_not_compared(self):
+        note = "- uno\n    - due\n"
+        self.assertEqual(check.missing_passages(note, "- uno\n\n  - due\n"), [])
+        self.assertEqual(check.missing_passages(note, "- uno - due\n"), [check.Change("uno ↵ -", "uno -")])
+
+    def test_filled_placeholders_pass(self):
+        note = "Se il server non risponde: [?]\nI passi sono: SYN, ...\nPoi …\n"
+        reply = "Se il server non risponde: ritrasmette.\nI passi sono: SYN, ACK.\nPoi chiude.\n"
+        self.assertEqual(check.missing_passages(note, reply), [])
+
+    def test_an_insertion_passes_even_when_it_changes_the_meaning(self):
+        # the merge fills gaps inline and unmarked: no check can tell this from a gap-fill
+        self.assertEqual(check.missing_passages("TCP è affidabile.\n", "TCP non è affidabile.\n"), [])
 
 class Summary(unittest.TestCase):
     def test_counts_conflicts_and_detects_missed_topics(self):

@@ -6,7 +6,7 @@ import re
 import shlex
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import Abort, version, check, courses, doctor, i18n, menu, merge, paths, setup, stopping, transcribe, ui, uninstall
@@ -15,6 +15,8 @@ from .i18n import t
 COMPLETED_MARKERS = ("[^conflitto-", check.MISSED_TOPICS_HEADING, "[^non-annotati]")  # the last: the old missed-topics footnote
 CREATE_LENGTH = 20  # the created note's length, in % of the transcript's words; to settle from real runs
 WARNING_PASSAGES = 5  # how many changed passages to show in the terminal; check.txt has all
+RUN_STAMP = "%Y-%m-%d_%H%M%S"  # how a run folder's name starts
+RUNS_KEPT_DAYS = 30  # run folders hold a copy of the note and the transcript: not kept forever
 
 
 class Parser(argparse.ArgumentParser):
@@ -229,7 +231,7 @@ def run(args: argparse.Namespace, console: ui.Console) -> int:
     all_courses = courses.load_courses()
     folders = {} if args.course else courses.load_folders(all_courses)
     course = courses.resolve_course(note, all_courses, folders, args.course)
-    caches = [paths.transcript_cache(args.whisper_model, transcribe.sha256_file(a)) for a in args.audio]
+    caches = [paths.transcript_cache(args.whisper_model, transcribe.sha256_file(a), course.vocab) for a in args.audio]
 
     if args.dry_run:
         return dry_run(args, course, note_text, caches)
@@ -310,7 +312,7 @@ def run_create(args: argparse.Namespace, console: ui.Console) -> int:
     all_courses = courses.load_courses()
     folders = {} if args.course else courses.load_folders(all_courses)
     course = courses.resolve_course(output, all_courses, folders, args.course)
-    caches = [paths.transcript_cache(args.whisper_model, transcribe.sha256_file(a)) for a in args.audio]
+    caches = [paths.transcript_cache(args.whisper_model, transcribe.sha256_file(a), course.vocab) for a in args.audio]
 
     if args.dry_run:
         transcript = cached_transcript(args, caches)
@@ -485,7 +487,8 @@ def preflight(args: argparse.Namespace, model: str, caches: list[Path]) -> None:
 
 
 def make_run_dir(note_stem: str) -> Path:
-    base = paths.runs_dir() / f"{datetime.now():%Y-%m-%d_%H%M%S}_{note_stem}"
+    prune_runs()
+    base = paths.runs_dir() / f"{datetime.now():{RUN_STAMP}}_{note_stem}"
     run_dir, n = base, 1
     while True:
         try:
@@ -506,6 +509,21 @@ def write_output(output: Path, text: str, run_dir: Path, force: bool, reply_name
     except FileExistsError:
         raise Abort(t("cli.appeared", output=output, reply=run_dir / reply_name)) from None
 
+
+def prune_runs() -> None:
+    """Delete the run folders older than RUNS_KEPT_DAYS; only folders named as make_run_dir names them."""
+    oldest = datetime.now() - timedelta(days=RUNS_KEPT_DAYS)
+    runs = paths.runs_dir()
+    for run_dir in runs.iterdir() if runs.is_dir() else []:
+        try:
+            started = datetime.strptime(run_dir.name[:len(f"{oldest:{RUN_STAMP}}")], RUN_STAMP)
+        except ValueError:
+            continue
+        if started < oldest and run_dir.is_dir() and not run_dir.is_symlink():
+            try:
+                shutil.rmtree(run_dir)
+            except OSError:  # a file still in use on Windows: the next run tries again
+                pass
 
 def _home(path: Path) -> str:
     home = str(Path.home())

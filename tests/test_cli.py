@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -356,7 +357,7 @@ class Create(Sandbox):
         self.assertFalse(self.created.exists())
 
     def test_dry_run_prints_the_input_and_runs_nothing(self):
-        cache = paths.transcript_cache(MODEL, transcribe.sha256_file(self.audio))
+        cache = self.transcript_cache()
         cache.parent.mkdir(parents=True)
         cache.write_text((FIXTURES / "transcript.txt").read_text(encoding="utf-8"), encoding="utf-8")
         code, out, err = self.rec2notes("create", self.created, self.audio, "--dry-run")
@@ -550,7 +551,7 @@ class AntigravityConsent(Sandbox):
 
 class DryRun(Sandbox):
     def test_prints_the_input_and_runs_nothing(self):
-        cache = paths.transcript_cache(MODEL, transcribe.sha256_file(self.audio))
+        cache = self.transcript_cache()
         cache.parent.mkdir(parents=True)
         cache.write_text((FIXTURES / "transcript.txt").read_text(encoding="utf-8"), encoding="utf-8")
         code, out, err = self.rec2notes(self.note, self.audio, "--dry-run")
@@ -567,6 +568,32 @@ class DryRun(Sandbox):
         self.assertEqual(code, 0, err)
         self.assertIn("(not transcribed yet: lezione.m4a)", out)
         self.assertEqual(self.calls("whisper"), [])
+
+
+class RunFolders(Sandbox):
+    def test_a_run_deletes_the_run_folders_older_than_thirty_days_and_nothing_else(self):
+        runs = paths.runs_dir()
+        old = runs / f"{datetime.now() - timedelta(days=31):{cli.RUN_STAMP}}_Lezione 0"
+        recent = runs / f"{datetime.now() - timedelta(days=29):{cli.RUN_STAMP}}_Lezione 0"
+        stray = runs / "2000-01-01 not a run"
+        for folder in (old, recent, stray):
+            (folder / "sub").mkdir(parents=True)
+            (folder / "sub" / "input.txt").write_text("appunti\n", encoding="utf-8")
+        old_file = runs / f"{datetime.now() - timedelta(days=31):{cli.RUN_STAMP}}_file"
+        old_file.write_text("x\n", encoding="utf-8")
+        self.assertEqual(self.rec2notes(self.note, self.audio)[0], 0)
+        self.assertFalse(old.exists())
+        kept = set(self.run_dirs())
+        self.assertLessEqual({recent, stray, old_file}, kept)
+        self.assertEqual(len(kept), 4)  # and this run's
+
+    def test_a_dry_run_deletes_nothing(self):
+        old = paths.runs_dir() / f"{datetime.now() - timedelta(days=31):{cli.RUN_STAMP}}_Lezione 0"
+        old.mkdir(parents=True)
+        self.transcript_cache().parent.mkdir(parents=True)
+        self.transcript_cache().write_text("[00:00:00] Lezione.\n", encoding="utf-8")
+        self.assertEqual(self.rec2notes(self.note, self.audio, "--dry-run")[0], 0)
+        self.assertTrue(old.exists())
 
 
 @unittest.skipIf(paths.WINDOWS, "the fakes can't send SIGTERM on Windows: os.kill ends the process there")

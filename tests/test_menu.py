@@ -266,7 +266,7 @@ class Hub(Sandbox):
 
     def test_a_cached_transcript_needs_no_whisper_model(self):
         paths.whisper_model(MODEL).unlink()
-        cache = paths.transcript_cache(MODEL, transcribe.sha256_file(self.audio))
+        cache = self.transcript_cache()
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text("[00:00:00] Lezione.\n", encoding="utf-8")
         args, out, _ = self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "")
@@ -280,7 +280,7 @@ class Hub(Sandbox):
         self.assertNotIn("unusually long", out)
 
     def test_the_confirmation_counts_a_cached_transcript(self):
-        cache = paths.transcript_cache(MODEL, transcribe.sha256_file(self.audio))
+        cache = self.transcript_cache()
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text("[00:00:00] Lezione di reti.\n", encoding="utf-8")
         _, out, _ = self.hub("1", "2", str(self.note.with_name("Lezione 2.md")), str(self.audio), "", "", "n")

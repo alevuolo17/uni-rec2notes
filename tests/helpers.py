@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rec2notes import cli, i18n, paths
+from rec2notes import cli, i18n, paths, transcribe
 
 TESTS = Path(__file__).resolve().parent
 FAKES = TESTS / "fakes"
@@ -73,6 +73,10 @@ class Sandbox(unittest.TestCase):
         shutil.copy(FIXTURES / "note.md", self.note)
         self.output = self.note.with_name("Lezione 1 (completo).md")
         self.audio = self.make_audio("lezione.m4a", b"audio one")
+
+    def transcript_cache(self, model=MODEL):
+        """Where a run of the Reti di calcolatori note with self.audio finds its transcript."""
+        return paths.transcript_cache(model, transcribe.sha256_file(self.audio), "Lezione di reti.")
 
     def add_model(self, name):
         path = paths.whisper_model(name)

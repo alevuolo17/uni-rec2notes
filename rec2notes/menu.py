@@ -82,7 +82,7 @@ def _guided_run(console, ask, parse) -> argparse.Namespace | None:
     audio = _ask_recordings(console, ask)
     course = _pick_course(console, ask, note)
     args = parse([str(note), *map(str, audio), "--course", course.slug, *(["--clean"] if clean else [])])
-    return _confirm(console, ask, args, [
+    return _confirm(console, ask, args, course, [
         (t("menu.row.course"), [course.name], ()),
         (t("menu.row.note"), [note.name], ()),
         *([(t("menu.row.clean"), [t("menu.clean.yes"),
@@ -97,7 +97,7 @@ def _guided_create(console, ask, parse) -> argparse.Namespace | None:
     audio = _ask_recordings(console, ask)
     course = _pick_course(console, ask, note)
     args = parse([str(note), *map(str, audio), "--course", course.slug])
-    return _confirm(console, ask, args, [
+    return _confirm(console, ask, args, course, [
         (t("menu.row.course"), [course.name], ()),
         (t("menu.row.new_note"), [note.name], ()),
         (t("menu.row.recording"), [a.name for a in audio], ()),
@@ -105,13 +105,14 @@ def _guided_create(console, ask, parse) -> argparse.Namespace | None:
     ])
 
 
-def _confirm(console, ask, args: argparse.Namespace, rows: list[tuple[str, list[str], tuple]]) -> argparse.Namespace | None:
+def _confirm(console, ask, args: argparse.Namespace, course: courses.Course,
+             rows: list[tuple[str, list[str], tuple]]) -> argparse.Namespace | None:
     """Show what will run, with the settings and anything that stops it; Enter starts it, `c` changes the
     settings for this run only."""
     sums = [transcribe.sha256_file(a) for a in args.audio]
     seconds = [transcribe.audio_seconds(a) for a in args.audio]
     while True:
-        caches = [paths.transcript_cache(args.whisper_model, s) for s in sums]
+        caches = [paths.transcript_cache(args.whisper_model, s, course.vocab) for s in sums]
         console.line()
         console.summary([*rows, *_settings_rows(args), *_transcript_rows(seconds, caches)])
         console.line()

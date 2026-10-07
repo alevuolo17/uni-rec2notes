@@ -7,7 +7,7 @@
 
 <p align="center">
   <b>Complete your lecture notes from the lecture recording.</b><br>
-  Local Whisper transcription · a Claude Code or Antigravity merge · gaps filled, conflicts flagged, your words never rewritten.
+  Local Whisper transcription · a Claude Code or Antigravity merge · gaps filled, conflicts flagged, your text kept and checked.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 You record every lecture, but nobody listens to 90 minutes of audio again to fix their notes.
 **rec2notes does it for you.** It transcribes the recording on your own computer, then has an AI agent, Claude Code or Google's Antigravity,
 fill the gaps in your notes, flag what you wrote down wrong, and list what you missed, without
-rewriting a single word of yours.
+changing anything you wrote: rec2notes checks that every word, symbol and line break of your note is still there.
 
 - ✍️ **Gaps filled**, in your note's own style: the definition you didn't catch, the step you skipped, your `[?]`.
 - ⚖️ **Mistakes flagged, not fixed**: your sentence stays, with a footnote saying what was said and when, so you decide.
@@ -179,7 +179,7 @@ Last, the folder that holds the course's notes. When a note is in it, or in its 
 4. **Which course is this?** If the note is in one of your courses' folders, that course is marked and Enter picks it.
 5. **A summary**: course, note, recording, and the agent, its model and effort, and the Whisper model. Enter starts; `c` changes the models and effort for this run. Anything that would stop the run, such as a Whisper model that isn't downloaded, is listed here, before it starts.
 
-You get `<note> (completo).md` next to your note. Look for the `[^conflitto-N]` footnotes, where your note and the lecture disagree, and the *Argomenti non presenti negli appunti* section at the end. If any of your words went missing, the terminal lists them; a filled-in `[?]` is expected there.
+You get `<note> (completo).md` next to your note. Look for the `[^conflitto-N]` footnotes, where your note and the lecture disagree, and the *Argomenti non presenti negli appunti* section at the end. If anything you wrote went missing or changed, the terminal lists it; a placeholder the agent filled in, such as "da completare", is expected there. What the agent added isn't marked, so read the note before you trust it.
 
 ### Create a note from a recording
 
@@ -207,6 +207,7 @@ Every run also takes `--course`, `--whisper-model`, `--agent`, `--model` and `--
 ## Privacy and security
 
 - **Transcription stays on your computer**: the recording never leaves it.
+- **What rec2notes keeps.** Each run keeps a copy of the note, the transcript and the agent's reply in `cache/runs` in rec2notes' folder (and your old `(completo)` file, when `--force` replaced it), for 30 days: the next run after that deletes them. Transcripts stay in `cache/transcripts`, so a rerun doesn't transcribe again, until `rec2notes uninstall`.
 - **The note goes to your agent.** A merge, `clean` or `create` sends the note, the transcript and the course's name and vocabulary to Anthropic (Claude Code) or Google (Antigravity), under your account's terms. On personal Google accounts, Antigravity's terms let Google use what you send to improve its models; rec2notes turns Antigravity's telemetry off, but Google hasn't said that this is enough. The first Antigravity run asks before sending anything.
 - **Ask before recording.** Some professors don't allow recording a lecture, or sharing the recording or its transcript.
 - **The agent gets no tools**: no files, no commands, no web. Claude Code runs with `--tools ""`. Antigravity runs in a throwaway folder whose settings deny every tool, deleted after each call, but its web search can't be turned off: when the agent used it, the run warns you. Check that note: what it looked up isn't from the lecture, and a transcript could hold instructions aimed at the agent.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 (2026-10-07)
+
+- runs: delete run folders after 30 days, and say what is kept
+- transcribe: key the transcript cache on the course vocabulary too
+- check: compare symbols and line breaks too, and say exactly what it guarantees
+- tests: keep the banner tests and the whole suite away from the real settings
+
 ## 0.4.0 (2026-10-06)
 
 - test_doctor: take the VAD model name from paths, not a literal
