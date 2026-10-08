@@ -47,6 +47,7 @@ class Sandbox(unittest.TestCase):
             "FAKE_CLAUDE_LOG": str(self.tmp / "claude.log"),
             "FAKE_AGY_LOG": str(self.tmp / "agy.log"),
             "FAKE_WHISPER_LOG": str(self.tmp / "whisper.log"),
+            "FAKE_POPPLER_LOG": str(self.tmp / "poppler.log"),
             "FAKE_PYTHON": sys.executable,  # for the fakes' .cmd wrappers on Windows
             "PYTHONUTF8": "1",  # the fakes read and write UTF-8, as the real programs do
         })
@@ -54,12 +55,13 @@ class Sandbox(unittest.TestCase):
         self.addCleanup(env.stop)
         for var in ("REC2NOTES_AGENT", "REC2NOTES_MODEL", "REC2NOTES_EFFORT", "REC2NOTES_CLAUDE_MODEL",
                     "REC2NOTES_WHISPER_MODEL", "REC2NOTES_LANGUAGE", "FAKE_CLAUDE_MODE", "FAKE_AGY_MODE",
+                    "FAKE_CLAUDE_MESSAGE", "FAKE_CLAUDE_TOUCH", "FAKE_VERIFY_REPLY",
                     "FORCE_COLOR"):  # FORCE_COLOR makes argparse colour the usage on Python 3.14
             os.environ.pop(var, None)
-        for agent in ("claude", "agy"):
-            fake = FAKES / (f"{agent}.cmd" if paths.WINDOWS else agent)
-            self.assertEqual(os.path.normcase(str(shutil.which(agent))), os.path.normcase(fake),
-                             f"the tests must never reach the real {agent}")
+        for program in ("claude", "agy", "pdfinfo", "pdftoppm"):
+            fake = FAKES / (f"{program}.cmd" if paths.WINDOWS else program)
+            self.assertEqual(os.path.normcase(str(shutil.which(program))), os.path.normcase(fake),
+                             f"the tests must never reach the real {program}")
 
         self.folder = self.tmp / "rec2notes"
         self.folder.mkdir()

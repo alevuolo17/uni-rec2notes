@@ -1,6 +1,7 @@
 import contextlib
 import importlib.metadata
 import io
+import json
 import os
 import shlex
 import shutil
@@ -14,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import rec2notes
-from rec2notes import cli, courses, merge, paths, setup, transcribe
+from rec2notes import cli, courses, merge, paths, setup, transcribe, verify
 
 from .helpers import FIXTURES, MODEL, TESTS, Sandbox
 
@@ -732,3 +733,108 @@ class TranscriptSize(Sandbox):
         self.assertEqual(code, 0, err)
         self.assertRegex(out, r"⚠ Transcript  \d+ words, unusually long")
         self.assertIn("✓ Merge", out)
+
+
+class Verify(Sandbox):
+    def setUp(self):
+        super().setUp()
+        self.slides = self.tmp / "slides" / "Lezione 1.pdf"
+        self.slides.parent.mkdir()
+        self.slides.write_bytes(b"%PDF-1.4\nfake slides\n%%EOF\n")
+
+    def test_without_a_recording_it_checks_the_slides_only(self):
+        original = self.note.read_text(encoding="utf-8")
+        code, out, err = self.rec2notes("verify", self.note, self.slides)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.note.read_text(encoding="utf-8"),
+                         f"{original.rstrip()}\n\n{verify.SECTION_HEADING}\n\n"
+                         "- **Appunti:** «x» — **Correzione:** y — **Fonte:** slide 1: «z»\n")
+        self.assertEqual(out.splitlines()[:2], ["rec2notes · Check against slides", "Lezione 1.md"])
+        self.assertIn("✓ Slides      1 PDF · 3 pages · ≈ 5k tokens", out)
+        self.assertEqual(sorted(p.name for p in self.run_dirs()[0].glob("*.png")),
+                         ["slides-1-1.png", "slides-1-2.png", "slides-1-3.png"])
+        self.assertIn("✓ Verify      claude · effort high", out)
+        self.assertIn("✓ Write       Lezione 1.md\n", out)
+        self.assertRegex(out, r"\n  Findings +1\n  Run +")
+        self.assertNotIn("Transcribe", out)
+        self.assertEqual(self.calls("whisper"), [])
+        self.assertNotIn("<transcript>", (self.run_dirs()[0] / "verify-input.txt").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(p.name for p in self.note.parent.iterdir()), ["Lezione 1.md"])
+
+    def test_with_a_recording_the_transcript_goes_too(self):
+        code, out, err = self.rec2notes("verify", self.note, self.slides, self.audio)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.splitlines()[:2], ["rec2notes · Reti di calcolatori", "Lezione 1.md"])
+        self.assertIn("✓ Transcribe", out)
+        self.assertTrue(self.transcript_cache().exists())
+        self.assertIn("</notes>\n\n<transcript>\n[", (self.run_dirs()[0] / "verify-input.txt").read_text(encoding="utf-8"))
+
+    def test_it_runs_claude_whatever_agent_is_saved(self):
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        code, _, err = self.rec2notes("verify", self.note, self.slides, "--model", "opus")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls("claude"), [merge.claude_command("high", "opus", paths.VERIFY_PROMPT)[1:]
+                                                + merge.STREAM_JSON])
+        self.assertEqual(self.calls("agy"), [])
+
+    def test_a_page_range_after_the_pdf(self):
+        code, out, err = self.rec2notes("verify", self.note, f"{self.slides}:2-3")
+        self.assertEqual(code, 0, err)
+        self.assertIn("✓ Slides      1 PDF · 2 pages", out)
+        self.assertEqual(self.poppler_calls()[-1][:6], ["-f", "2", "-l", "3", "-scale-to", "960"])
+
+    def test_ranges_are_parsed_only_after_a_pdf(self):
+        self.assertEqual(verify.parse_slides("x.pdf:3"), verify.Slides(Path("x.pdf"), 3, 3))
+        self.assertEqual(verify.parse_slides("C:\\Slides\\x.PDF:12-30"), verify.Slides(Path("C:\\Slides\\x.PDF"), 12, 30))
+        self.assertEqual(verify.parse_slides("C:\\Slides\\x.pdf"), verify.Slides(Path("C:\\Slides\\x.pdf")))
+        self.assertEqual(verify.parse_slides("lezione.m4a"), verify.Slides(Path("lezione.m4a")))
+
+    def test_a_range_outside_the_pdf_stops_before_any_call(self):
+        code, _, err = self.rec2notes("verify", self.note, f"{self.slides}:2-9")
+        self.assertEqual(code, 1)
+        self.assertIn("has 3 pages: pages 2-9 are not all in it", err)
+        self.assertEqual(self.calls("claude"), [])
+        self.assertEqual(self.run_dirs(), [])
+
+    def test_over_100_pages_stops_before_any_call(self):
+        self.slides.write_bytes(b"%PDF-1.4\npages 120\n")
+        code, _, err = self.rec2notes("verify", self.note, self.slides)
+        self.assertEqual(code, 1)
+        self.assertIn("120 pages in all, over the 100", err)
+        self.assertEqual(self.rec2notes("verify", self.note, f"{self.slides}:21-120")[0], 0)
+
+    def test_without_poppler_it_says_how_to_install_it(self):
+        with mock.patch.dict(os.environ, {"PATH": str(self.tmp / "bin")}):
+            code, _, err = self.rec2notes("verify", self.note, self.slides)
+        self.assertEqual(code, 1)
+        self.assertIn("needs poppler (pdfinfo and pdftoppm)", err)
+
+    def poppler_calls(self):
+        log = self.tmp / "poppler.log"
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+    def test_slides_in_another_format_are_refused(self):
+        pptx = self.tmp / "slides" / "Lezione 1.pptx"
+        pptx.write_bytes(b"PK")
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            cli.parse_verify_args([str(self.note), str(pptx)])
+        self.assertIn("export the slides to PDF first", err.getvalue())
+
+    def test_at_least_one_pdf_is_needed(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit):
+            cli.parse_verify_args([str(self.note), str(self.audio)])
+        self.assertIn("at least one .pdf", err.getvalue())
+
+    def test_a_missing_file_stops_before_any_call(self):
+        code, _, err = self.rec2notes("verify", self.note, self.tmp / "nope.pdf")
+        self.assertEqual(code, 1)
+        self.assertIn("file not found", err)
+        self.assertEqual(self.calls("claude"), [])
+
+    def test_a_note_changed_during_the_run_is_left_alone(self):
+        os.environ["FAKE_CLAUDE_TOUCH"] = str(self.note)
+        code, out, err = self.rec2notes("verify", self.note, self.slides)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(verify.SECTION_HEADING, self.note.read_text(encoding="utf-8"))
+        self.assertIn("⚠ Write       Lezione 1.md changed during the run, so it was left alone", out)
+        self.assertIn(verify.SECTION_HEADING, (self.run_dirs()[0] / "Lezione 1.md").read_text(encoding="utf-8"))

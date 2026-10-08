@@ -9,7 +9,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import Abort, version, check, courses, doctor, i18n, menu, merge, paths, setup, stopping, transcribe, ui, uninstall
+from . import (Abort, version, check, courses, doctor, i18n, menu, merge, paths, setup, stopping, transcribe, ui,
+               uninstall, verify)
 from .i18n import t
 
 COMPLETED_MARKERS = ("[^conflitto-", check.MISSED_TOPICS_HEADING, "[^non-annotati]")  # the last: the old missed-topics footnote
@@ -17,6 +18,7 @@ CREATE_LENGTH = 20  # the created note's length, in % of the transcript's words;
 WARNING_PASSAGES = 5  # how many changed passages to show in the terminal; check.txt has all
 RUN_STAMP = "%Y-%m-%d_%H%M%S"  # how a run folder's name starts
 RUNS_KEPT_DAYS = 30  # run folders hold a copy of the note and the transcript: not kept forever
+SLIDE_FORMATS = (".pptx", ".ppt", ".odp", ".key")  # slides verify can't read: they need exporting to PDF
 
 
 class Parser(argparse.ArgumentParser):
@@ -40,7 +42,7 @@ def build_parser() -> Parser:
     p.add_argument("--force", action="store_true", help=t("cli.help.force_merge"))
     p.add_argument("--dry-run", action="store_true", help=t("cli.help.dry_run"))
     p.add_argument("--version", action="version", version=f"rec2notes {version()}")
-    p.set_defaults(create=False)
+    p.set_defaults(create=False, verify=False)
     return p
 
 
@@ -48,13 +50,18 @@ def add_whisper_option(p: argparse.ArgumentParser) -> None:
     p.add_argument("--whisper-model", metavar="NAME", help=t("cli.help.whisper_model", settings=t("path.settings")))
 
 
-def add_agent_options(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--agent", choices=tuple(merge.AGENTS), help=t("cli.help.agent", settings=t("path.settings")))
+def add_agent_options(p: argparse.ArgumentParser, agent: bool = True) -> None:
+    """`agent` False: the command runs Claude only, whatever agent is saved, and its help says so."""
+    if agent:
+        p.add_argument("--agent", choices=tuple(merge.AGENTS), help=t("cli.help.agent", settings=t("path.settings")))
+    else:
+        p.set_defaults(agent="claude")
+    keys = "cli.help" if agent else "cli.verify"
     p.add_argument("--model", metavar="MODEL",
-                   help=t("cli.help.model", antigravity_model=paths.ANTIGRAVITY_MODEL, settings=t("path.settings")))
+                   help=t(f"{keys}.model", antigravity_model=paths.ANTIGRAVITY_MODEL, settings=t("path.settings")))
     p.add_argument("--claude-model", dest="model", help=argparse.SUPPRESS)  # the old name of --model
     p.add_argument("--effort", metavar="LEVEL",
-                   help=t("cli.help.effort", efforts=", ".join(merge.EFFORTS), settings=t("path.settings")))
+                   help=t(f"{keys}.effort", efforts=", ".join(merge.EFFORTS), settings=t("path.settings")))
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -80,10 +87,33 @@ def parse_create_args(argv: list[str]) -> argparse.Namespace:
     add_agent_options(p)
     p.add_argument("--force", action="store_true", help=t("cli.create.force"))
     p.add_argument("--dry-run", action="store_true", help=t("cli.help.dry_run"))
-    p.set_defaults(create=True)
+    p.set_defaults(create=True, verify=False)
     args = _checked(p, argv)
     if not 5 <= args.length <= 60:
         p.error(t("cli.error.length", length=args.length))
+    return args
+
+
+def parse_verify_args(argv: list[str]) -> argparse.Namespace:
+    """FILE... splits into the slides (.pdf, each with its page range if given) and the recordings (the rest), each
+    kept in order; `files` are their paths."""
+    p = Parser(prog="rec2notes verify", description=t("cli.verify.description"))
+    p.add_argument("note", type=Path, help=t("cli.verify.note"))
+    p.add_argument("files", nargs="+", metavar="FILE", help=t("cli.verify.files", max=verify.MAX_PAGES))
+    p.add_argument("--course", metavar="SLUG", help=t("cli.verify.course"))
+    add_whisper_option(p)
+    add_agent_options(p, agent=False)
+    p.set_defaults(create=False, verify=True)
+    args = _checked(p, argv)
+    given = [verify.parse_slides(arg) for arg in args.files]
+    for slides in given:
+        if slides.pdf.suffix.lower() in SLIDE_FORMATS:
+            p.error(t("cli.verify.export_pdf", file=slides.pdf))
+    args.files = [slides.pdf for slides in given]
+    args.slides = [s for s in given if s.pdf.suffix.lower() == ".pdf"]
+    args.audio = [s.pdf for s in given if s.pdf.suffix.lower() != ".pdf"]
+    if not args.slides:
+        p.error(t("cli.verify.no_pdf"))
     return args
 
 
@@ -117,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         return uninstall.main(argv[1:])
     if argv[:1] == ["course"]:
         return course_command(argv[1:])
-    clean_only, create = argv[:1] == ["clean"], argv[:1] == ["create"]
+    clean_only, create, verifying = argv[:1] == ["clean"], argv[:1] == ["create"], argv[:1] == ["verify"]
     menu_wanted = not argv and on_terminal()
     if not argv and not menu_wanted:  # bare `rec2notes` in a pipe: show what it is and how to use it
         build_parser().print_help()
@@ -126,14 +156,17 @@ def main(argv: list[str] | None = None) -> int:
     prefix = console.style("rec2notes:", ui.BOLD, ui.RED) if console.err.isatty() else "rec2notes:"
     try:
         args = (None if menu_wanted else parse_clean_args(argv[1:]) if clean_only
-                else parse_create_args(argv[1:]) if create else parse_args(argv))
+                else parse_create_args(argv[1:]) if create else parse_verify_args(argv[1:]) if verifying
+                else parse_args(argv))
         if menu_wanted:  # bare `rec2notes` in a terminal: the menu picks the run
-            args = menu.hub(console, input, parse_args, parse_create_args)
+            args = menu.hub(console, input, parse_args, parse_create_args, parse_verify_args)
             if args is None:
                 return 0
         with stopping.handling():
             if clean_only:
                 return run_clean(args, console)
+            if args.verify:
+                return run_verify(args, console)
             return run_create(args, console) if args.create else run(args, console)
     except Abort as e:
         console.line(f"{prefix} {e}", err=True)
@@ -343,6 +376,51 @@ def run_create(args: argparse.Namespace, console: ui.Console) -> int:
                aimed=args.length)
     console.line()
     console.summary([(t("row.length"), [length], (ui.DIM,)), *tools_rows(created.tools),
+                     (t("row.run"), [_home(run_dir)], (ui.DIM,))])
+    return 0
+
+
+def run_verify(args: argparse.Namespace, console: ui.Console) -> int:
+    given = [args.note, *args.files]
+    note = Path(os.path.abspath(args.note))
+    if not note.is_file():
+        raise Abort(t("cli.note_not_found", note=args.note) + _unquoted_hint(given, 0))
+    for i, file in enumerate(args.files, 1):
+        if not file.is_file():
+            raise Abort(t("cli.file_not_found", file=file) + _unquoted_hint(given, i))
+    verify.check_agent(args.agent)
+    slides = [verify.with_pages(s) for s in args.slides]  # a bad PDF or range stops here, before a long transcription
+    verify.check_pages(slides)
+    course, caches = None, []
+    if args.audio:
+        all_courses = courses.load_courses()
+        folders = {} if args.course else courses.load_folders(all_courses)
+        course = courses.resolve_course(note, all_courses, folders, args.course)
+        caches = [paths.transcript_cache(args.whisper_model, transcribe.sha256_file(a), course.vocab) for a in args.audio]
+
+    preflight(args, args.whisper_model, caches)
+    run_dir = make_run_dir(note.stem)
+    console.header(course.name if course else t("cli.verify.title"), note.name)
+    pages = sum(s.pages for s in slides)
+    tokens = verify.tokens_label(verify.estimate_tokens(pages, note.read_text(encoding="utf-8")))
+    with console.step(t("step.slides"), t("cli.verify.slides", n=len(slides), pages=pages, tokens=tokens)) as step:
+        blocks = verify.slide_blocks(slides, run_dir)
+        step.end("ok", step.detail, ui.duration(step.elapsed))
+    transcript = None
+    if args.audio:
+        transcript = transcribe_all(args, course, caches, run_dir, console)
+        confirm_size(transcript, console)
+    with console.step(t("step.verify"), agent_detail(args)) as step:
+        result = verify.verify(note, blocks, transcript, run_dir, args.agent, args.effort, args.model,
+                               notify=lambda message: step.note("warn", message))
+        step.end("ok", step.detail, ui.duration(step.elapsed))
+    if result.in_vault:
+        console.mark("ok", t("step.write"), note.name)
+    else:
+        console.mark("warn", t("step.write"), t("cli.verify.left_alone", name=note.name, copy=_home(result.written)))
+
+    console.line()
+    console.summary([(t("row.findings"), [str(result.findings)], (ui.YELLOW,) if result.findings else (ui.DIM,)),
                      (t("row.run"), [_home(run_dir)], (ui.DIM,))])
     return 0
 

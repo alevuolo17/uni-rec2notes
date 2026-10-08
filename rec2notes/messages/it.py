@@ -104,7 +104,7 @@ MESSAGES: dict[str, str] = {
     "path.settings": "`rec2notes` → Impostazioni",
     "path.courses": "`rec2notes` → 3 Corsi",
     # menu: the hub
-    "menu.hub.run": "Esegui: completa degli appunti, o creane di nuovi, da una registrazione",
+    "menu.hub.run": "Esegui: completa degli appunti, creane di nuovi o controllali con le slide",
     "menu.hub.doctor": "Doctor: controlla che sia tutto configurato",
     "menu.hub.courses": "Corsi: elencali, aggiungi i tuoi",
     "menu.hub.settings": "Impostazioni: la tua cartella rec2notes, agente, modello, effort e Whisper",
@@ -113,18 +113,26 @@ MESSAGES: dict[str, str] = {
     "menu.not_an_option": "Opzione non valida.",
     "menu.run.complete": "Completa degli appunti dalla loro registrazione",
     "menu.run.create": "Crea degli appunti da una registrazione, per una lezione senza appunti",
-    "menu.type_1_2_b": "Scrivi 1, 2 oppure b.",
+    "menu.run.verify": "Controlla degli appunti con le slide, elencando in fondo i probabili errori",
+    "menu.type_1_2_3_b": "Scrivi 1, 2, 3 oppure b.",
     # menu: a run
     "menu.ask.note": "Appunti (.md): ",
     "menu.ask.clean": "Pulire prima gli appunti? Vengono copiati in '(pulito)' e si unisce la copia. [s/N] ",
     "menu.ask.recording": "Registrazione: ",
     "menu.ask.another_part": "Un'altra parte della stessa lezione? Percorso, oppure Invio se non ce ne sono: ",
+    "menu.ask.slides": "Slide (.pdf): ",
+    "menu.ask.another_pdf": "Un altro PDF? Percorso, oppure Invio se non ce ne sono: ",
+    "menu.ask.pages": "Pagine da controllare, es. 12-30 (Invio: tutte e {count}): ",
+    "menu.bad_pages": "Scrivi una pagina o un intervallo di pagine da 1 a {count}, es. 12-30.",
     "menu.ask.new_note": "Nuovi appunti (.md), il loro percorso completo; ~ è la tua cartella home: ",
     "menu.row.course": "Corso",
     "menu.row.note": "Appunti",
     "menu.row.new_note": "Nuovi appunti",
     "menu.row.clean": "Pulizia",
     "menu.row.recording": "Registrazione",
+    "menu.row.slides": "Slide",
+    "menu.row.estimate": "Stima",
+    "menu.slides_pages": "{name}, pagine {first}-{last}",
     "menu.row.length": "Lunghezza",
     "menu.row.agent": "Agente",
     "menu.row.model": "Modello",
@@ -148,6 +156,7 @@ MESSAGES: dict[str, str] = {
     "menu.no_such_folder": "Cartella inesistente: {folder}.{hint}",
     "menu.note_exists": "{note} esiste già: scegli un altro nome.",
     "menu.not_a_file": "Non è un file: {path}",
+    "menu.not_a_pdf": "Non è un PDF: {path} (esporta prima le slide in PDF)",
     # menu: pickers
     "menu.pick.course": "Di quale corso si tratta?",
     "menu.pick.new_course": "Un nuovo corso",
@@ -222,12 +231,15 @@ MESSAGES: dict[str, str] = {
     "step.write": "Scrittura",
     "step.create": "Creazione",
     "step.clean": "Pulizia",
+    "step.slides": "Slide",
+    "step.verify": "Verifica",
     "row.conflicts": "Conflitti",
     "row.missed": "Argomenti persi",
     "row.changed": "Modificati",
     "row.tools": "Strumenti",
     "row.run": "Esecuzione",
     "row.length": "Lunghezza",
+    "row.findings": "Segnalazioni",
     "yes": "sì",
     "no": "no",
     "ui.left": "~{left} rimanenti ({at})",
@@ -236,6 +248,7 @@ MESSAGES: dict[str, str] = {
                             "Scrive '<appunti> (completo).md' accanto agli appunti e non li modifica mai.",
     "cli.help.epilog": "`rec2notes create NOTE AUDIO` scrive degli appunti nuovi dalla sola registrazione. "
                        "`rec2notes clean NOTE` pulisce prima degli appunti grezzi. "
+                       "`rec2notes verify NOTE SLIDES.pdf [AUDIO]` controlla degli appunti finiti con le slide. "
                        "`rec2notes doctor` controlla che ci sia tutto ciò che serve a un'esecuzione; `rec2notes setup` lo installa, `rec2notes uninstall` lo rimuove.",
     "cli.help.note": "gli appunti formattati (.md)",
     "cli.help.audio": "la registrazione; più file sono parti di una stessa lezione, in ordine",
@@ -260,6 +273,24 @@ MESSAGES: dict[str, str] = {
     "cli.create.note": "gli appunti da creare (.md); la loro cartella indica il corso",
     "cli.create.length": "la lunghezza degli appunti a cui puntare, in %% delle parole della trascrizione (default: {default})",
     "cli.create.force": "sostituisce NOTE se esiste, tenendone una copia nella cartella dell'esecuzione",
+    "cli.verify.description": "Controlla degli appunti finiti con le slide della lezione, e con la registrazione se indicata: "
+                              "i probabili errori sono elencati, con una correzione e la fonte, in una sezione "
+                              "'## Correzioni (da verificare e applicare)' in fondo agli appunti (una nuova esecuzione la "
+                              "sostituisce). Il resto degli appunti resta com'è. Solo con Claude Code.",
+    "cli.verify.note": "gli appunti finiti (.md)",
+    "cli.verify.files": "le slide (.pdf, uno o più; slide.pdf:12-30 controlla solo le pagine da 12 a 30, al massimo "
+                        "{max} pagine in tutto) e, se vuoi, la registrazione (più file sono parti di una stessa lezione, "
+                        "in ordine)",
+    "cli.verify.course": "slug del corso, per trascrivere la registrazione (predefinito: dalla cartella degli appunti)",
+    "cli.verify.model": "il modello di Claude, es. opus o sonnet (default: $REC2NOTES_MODEL, altrimenti quello "
+                        "salvato in {settings}, altrimenti quello di Claude Code)",
+    "cli.verify.effort": "l'effort di Claude: {efforts} (default: $REC2NOTES_EFFORT, altrimenti quello salvato in "
+                         "{settings}, altrimenti high)",
+    "cli.verify.export_pdf": "{file}: esporta prima le slide in PDF",
+    "cli.verify.no_pdf": "indica le slide come almeno un file .pdf",
+    "cli.verify.title": "Controllo con le slide",
+    "cli.verify.slides": "{n} PDF · {pages} pagine · {tokens}",
+    "cli.verify.left_alone": "{name} è cambiato durante l'esecuzione, quindi non è stato toccato: gli appunti controllati sono in {copy}",
     "cli.error.length": "--length deve essere tra 5 e 60, non {length}",
     "cli.error.agent": "l'agente deve essere uno tra {names}, non {agent!r}",
     "cli.error.effort": "l'effort deve essere uno tra {names}, non {effort!r}",
@@ -287,6 +318,7 @@ MESSAGES: dict[str, str] = {
     # cli: a run
     "cli.note_not_found": "appunti non trovati: {note}",
     "cli.audio_not_found": "file audio non trovato: {audio}",
+    "cli.file_not_found": "file non trovato: {file}",
     "cli.unquoted": "Il suo percorso ha degli spazi ed è stato spezzato dalla shell: mettilo tra virgolette: \"{joined}\"",
     "cli.already_completed": "{name} ha già note a piè di pagina di conflitto o argomenti persi, "
                              "quindi sembra degli appunti completati. Passa gli appunti originali.",
@@ -353,6 +385,7 @@ MESSAGES: dict[str, str] = {
     "doctor.row.folder": "Cartella rec2notes",
     "doctor.row.whisper_model": "Modello Whisper",
     "doctor.row.vad_model": "Modello VAD",
+    "doctor.only_verify": "non installato; serve solo al controllo con le slide",
     "doctor.row.folders": "Cartelle",
     "doctor.unknown_agent": "agente sconosciuto {agent!r}",
     "doctor.use_one_of": "usa uno tra {names}",
@@ -410,6 +443,18 @@ MESSAGES: dict[str, str] = {
     "merge.blocked": "Ha provato a usare {tools}, che rec2notes blocca: la trascrizione potrebbe contenere istruzioni rivolte all'agente.",
     "merge.twice": "{program} {problem} due volte. La risposta e lo stderr di {program} sono conservati in {run_dir}{details}{blocked}",
     "merge.cannot_delete": "impossibile eliminare {folder}, che potrebbe contenere una copia della conversazione ({reason}): eliminala tu",
+    # verify
+    "verify.claude_only": "{label} non legge i PDF: il controllo sulle slide funziona solo con Claude Code (--agent claude)",
+    "verify.not_a_pdf": "{file} non è un PDF: esporta prima le slide in PDF",
+    "verify.too_big": "le slide occupano circa {mb} MB una volta codificate, oltre i {max} MB che Claude accetta in una richiesta: controlla meno pagine",
+    "verify.bad_range": "{file} ha {count} pagine: le pagine {first}-{last} non ci sono tutte",
+    "verify.too_many_pages": "{pages} pagine in tutto, oltre le {max} che Claude accetta in una richiesta: controlla meno pagine",
+    "verify.unreadable": "poppler non è riuscito a leggere {file}: {error}",
+    "verify.timed_out": "ci ha messo troppo",
+    "verify.no_poppler": "il controllo con le slide richiede poppler (pdfinfo e pdftoppm), che non è installato: {hint}",
+    "verify.poppler_linux": "installalo con il gestore di pacchetti (poppler-utils su Fedora, Debian e Ubuntu, poppler su Arch)",
+    "verify.poppler_windows": "installalo con `winget install oschwartz10612.Poppler`, poi apri un nuovo terminale",
+    "verify.tokens": "≈ {k}k token",
     # uninstall
     "uninstall.description": "Elimina il contenuto della tua cartella rec2notes e il puntatore ad essa, dopo aver chiesto. "
                              "I tuoi appunti non vengono mai toccati.",

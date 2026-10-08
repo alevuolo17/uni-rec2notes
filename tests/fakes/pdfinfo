@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Fake pdfinfo: prints the Pages line of a fake PDF, whose page count is the number after "pages " in it (3 if
+none); fails as pdfinfo does on a file that isn't a PDF."""
+import re
+import sys
+
+data = open(sys.argv[-1], "rb").read()
+if not data.startswith(b"%PDF-"):
+    sys.exit("Syntax Error: Couldn't find trailer dictionary")
+match = re.search(rb"pages (\d+)", data)
+print("Producer:       fake")
+print(f"Pages:          {int(match[1]) if match else 3}")

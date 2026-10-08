@@ -18,7 +18,7 @@ from .i18n import t
 
 
 def build_input(course: Course, note: str, transcript: str) -> str:
-    return f"{_course(course)}<notes>\n{_with_final_newline(note)}</notes>\n\n{_transcript(transcript)}"
+    return f"{_course(course)}<notes>\n{with_final_newline(note)}</notes>\n\n{_transcript(transcript)}"
 
 
 def build_create_input(course: Course, transcript: str, words: int, target: int) -> str:
@@ -32,7 +32,7 @@ def _course(course: Course) -> str:
 
 
 def _transcript(transcript: str) -> str:
-    return f"<transcript>\n{_with_final_newline(transcript)}</transcript>\n"
+    return f"<transcript>\n{with_final_newline(transcript)}</transcript>\n"
 
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # what claude --effort takes
@@ -56,6 +56,7 @@ AGY_SETTINGS = {  # agy's settings.json in its throwaway home: every tool asks f
 }
 AGY_TIMEOUT = 60  # seconds for `agy models` (usually 2-5): it hangs when agy is not signed in
 AGY_DROPPED_ENV = ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
+STREAM_JSON = ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]  # -p needs --verbose
 REMOVE_TRIES = 40  # a quarter of a second apart: on Windows a background agy (its updater) locks a file for a moment
 
 
@@ -136,9 +137,10 @@ def remove_home(folder: Path) -> None:
 
 def run_agent(agent: str, input_text: str, run_dir: Path, effort: str | None, model: str | None,
               notify: Callable[[str], None] = lambda message: print(message, file=sys.stderr),
-              prompt: Path = paths.MERGE_PROMPT, file_prefix: str = "") -> Reply:
+              prompt: Path = paths.MERGE_PROMPT, file_prefix: str = "", attachments: list[dict] | None = None) -> Reply:
     """The agent's reply to `input_text` under the system prompt `prompt`, retrying once when the call fails
     or the reply is empty. The reply and stderr are kept in the run directory under `file_prefix`.
+    `attachments`, content blocks (PDFs, images) sent before the text, are Claude's only: agy takes text alone.
 
     Runs in the run directory (Antigravity: an empty folder in it) so that no CLAUDE.md, AGENTS.md or settings
     from the caller's working directory reach the agent. No timeout: a full lecture takes minutes.
@@ -152,7 +154,8 @@ def run_agent(agent: str, input_text: str, run_dir: Path, effort: str | None, mo
             status, reply, tools, denied = _call_antigravity(input_text, run_dir, model, prompt, stderr_path,
                                                              run_dir / f"{file_prefix}agy-events.jsonl", notify)
         else:
-            status, reply, tools = _call_claude(input_text, run_dir, effort, model, prompt, stderr_path)
+            status, reply, tools = _call_claude(input_text, run_dir, effort, model, prompt, stderr_path,
+                                                attachments, run_dir / f"{file_prefix}claude-events.jsonl")
         reply_path.write_text(reply, encoding="utf-8")
         stopping.check()
         if status == 0 and reply.strip():
@@ -166,16 +169,41 @@ def run_agent(agent: str, input_text: str, run_dir: Path, effort: str | None, mo
     raise Abort(t("merge.twice", program=program, problem=problem, run_dir=run_dir, details=details, blocked=blocked))
 
 
-def _call_claude(input_text: str, run_dir: Path, effort: str, model: str | None, prompt: Path,
-                 stderr_path: Path) -> tuple[int, str, list[str]]:
+def _call_claude(input_text: str, run_dir: Path, effort: str, model: str | None, prompt: Path, stderr_path: Path,
+                 attachments: list[dict] | None, events_path: Path) -> tuple[int, str, list[str]]:
+    """With attachments, one stream-json message holding them and the text; the reply is the result event's."""
     cmd = claude_command(effort, model, prompt)
     cmd[0] = paths.program(cmd[0])
+    if attachments:
+        cmd += STREAM_JSON
+        content = [*attachments, {"type": "text", "text": input_text}]
+        input_text = json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
     with (open(stderr_path, "a", encoding="utf-8") as stderr,
           subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                            stderr=stderr, text=True, encoding="utf-8", cwd=run_dir) as proc,
           stopping.child(proc)):
         reply, _ = proc.communicate(input_text)
+    if attachments:
+        with open(events_path, "a", encoding="utf-8") as f:
+            f.write(reply)
+        reply, error = _claude_result(reply)
+        if error:
+            with open(stderr_path, "a", encoding="utf-8") as f:
+                f.write(error + "\n")  # where the failure message shows the last lines from
     return proc.returncode, reply, []  # --tools "": it has none
+
+
+def _claude_result(events: str) -> tuple[str, str]:
+    """(reply, error) from claude's stream-json output: the result event's text, as the reply or as the error."""
+    for line in reversed(events.splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            text = str(event.get("result") or "")
+            return ("", text or "error") if event.get("is_error") else (text, "")
+    return "", ""
 
 
 def _call_antigravity(input_text: str, run_dir: Path, model: str, prompt: Path, stderr_path: Path,
@@ -224,5 +252,5 @@ def _read_events(events: str) -> tuple[str, list[str], list[str]]:
     return reply, tools, denied
 
 
-def _with_final_newline(text: str) -> str:
+def with_final_newline(text: str) -> str:
     return text if not text or text.endswith("\n") else text + "\n"

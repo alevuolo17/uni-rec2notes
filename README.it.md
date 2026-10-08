@@ -32,6 +32,7 @@ senza cambiare niente di quello che hai scritto: rec2notes controlla che ogni pa
 - 🧭 **Argomenti persi** raccolti in fondo, ognuno con il suo timestamp e il punto in cui va.
 - 🔒 **I tuoi appunti non vengono mai toccati**: il risultato è un nuovo file accanto, `<appunti> (completo).md`.
 - 📝 **Hai saltato la lezione?** rec2notes scrive degli appunti di studio dalla sola registrazione.
+- 🔎 **Controllo con le slide**: i probabili errori elencati in fondo ai tuoi appunti, ognuno con la correzione e la fonte; decidi tu cosa cambiare.
 
 ```mermaid
 flowchart LR
@@ -148,7 +149,7 @@ rec2notes doctor
 Scrivi `rec2notes` in un terminale. Si apre un menu, nella lingua che hai scelto in `setup`; scrivi un numero o una lettera e premi Invio:
 
 ```menu
-  1  Esegui: completa degli appunti, o creane di nuovi, da una registrazione
+  1  Esegui: completa degli appunti, creane di nuovi o controllali con le slide
   2  Doctor: controlla che sia tutto configurato
   3  Corsi: elencali, aggiungi i tuoi
   4  Impostazioni: la tua cartella rec2notes, agente, modello, effort e Whisper
@@ -185,6 +186,14 @@ Ottieni `<appunti> (completo).md` accanto ai tuoi appunti. Cerca le note `[^conf
 
 Per una lezione di cui non hai appunti: **1 → 2**. Dai il percorso completo dei nuovi appunti (la cartella deve esistere), la registrazione e il corso. Gli appunti escono lunghi circa un quinto della trascrizione, organizzati per argomento. L'audio poco chiaro è segnato con `[? hh:mm:ss]` e ciò che si vedeva solo su una slide con `(integra con slide)`.
 
+### Controllare appunti con le slide
+
+Per degli appunti finiti, completati o no: **1 → 3**. Dai gli appunti e le slide in PDF (più di uno se la lezione ne usava diversi; i file PowerPoint, Keynote o ODP esportali prima in PDF). Per ogni PDF, rec2notes chiede quali pagine controllare, ad esempio `12-30`; Invio le controlla tutte. Scegli solo le pagine della lezione: ogni pagina costa circa 900 token, e Claude ne accetta al massimo 100 alla volta. Prima di partire, il riepilogo mostra una stima dei token che invierà. Funziona solo con Claude Code: con Antigravity salvato, usa comunque Claude.
+
+Serve Poppler, che trasforma le pagine in immagini: `winget install oschwartz10612.Poppler` su Windows, `poppler-utils` su Fedora, Debian e Ubuntu, `poppler` su Arch. `rec2notes doctor` dice se c'è.
+
+I probabili errori finiscono in una sezione *Correzioni (da verificare e applicare)* in fondo agli appunti stessi: per ognuno, il passaggio, la correzione e la fonte (il numero di pagina di una slide nel PDF o la conoscenza generale). Nient'altro negli appunti cambia: decidi tu cosa correggere. Un nuovo controllo sostituisce quella sezione. Una copia degli appunti di prima del controllo resta nella cartella dell'esecuzione, e se modifichi gli appunti mentre il controllo è in corso, il risultato va in quella cartella.
+
 <details>
 <summary>Tutti i comandi</summary>
 
@@ -196,6 +205,7 @@ Tutto ciò che fa il menu è anche un comando, per gli script o se preferisci sc
 | `rec2notes NOTE AUDIO...` | Completa degli appunti. `--clean` prima li pulisce; `--force` sostituisce un file `(completo)` già esistente; `--dry-run` mostra cosa verrebbe inviato. |
 | `rec2notes create NOTE AUDIO...` | Scrive nuovi appunti dalla registrazione. `--length PCT`: quanto lunghi, come percentuale della trascrizione (default 20). |
 | `rec2notes clean NOTE` | Riordina soltanto degli appunti grezzi in `<appunti> (pulito).md`. |
+| `rec2notes verify NOTE SLIDES.pdf[:N-M]... [AUDIO...]` | Controlla degli appunti con le slide, solo le pagine da N a M se indicate, e con la registrazione se c'è. Solo Claude Code, quindi niente `--agent`. |
 | `rec2notes course add\|edit\|list` | Gestisce i tuoi corsi e le loro cartelle di appunti. |
 | `rec2notes doctor` | Controlla l'installazione; la prima riga è la tua versione (anche `rec2notes --version`). |
 | `rec2notes setup` | Installa o cambia Whisper (backend, modello) e sceglie la lingua (`--language en` o `it`, che salta la domanda). Si può rilanciare: tiene il tuo backend a meno che tu non ne scelga un altro. |
@@ -208,7 +218,7 @@ Ogni esecuzione accetta anche `--course`, `--whisper-model`, `--agent`, `--model
 
 - **La trascrizione resta sul tuo computer**: la registrazione non lo lascia mai.
 - **Cosa tiene rec2notes.** Ogni esecuzione tiene una copia degli appunti, della trascrizione e della risposta dell'agente in `cache/runs` nella cartella di rec2notes (e il tuo vecchio file `(completo)`, quando `--force` l'ha sostituito), per 30 giorni: la prima esecuzione dopo li cancella. Le trascrizioni restano in `cache/transcripts`, così rieseguire non trascrive di nuovo, fino a `rec2notes uninstall`.
-- **Gli appunti vanno al tuo agente.** Un merge, `clean` o `create` invia gli appunti, la trascrizione e il nome e il vocabolario del corso ad Anthropic (Claude Code) o a Google (Antigravity), alle condizioni del tuo account. Con gli account Google personali, le condizioni di Antigravity permettono a Google di usare ciò che invii per migliorare i suoi modelli; rec2notes disattiva la telemetria di Antigravity, ma Google non ha detto che basti. La prima esecuzione con Antigravity chiede prima di inviare qualsiasi cosa.
+- **Gli appunti vanno al tuo agente.** Un merge, `clean` o `create` invia gli appunti, la trascrizione e il nome e il vocabolario del corso ad Anthropic (Claude Code) o a Google (Antigravity), alle condizioni del tuo account. `verify` invia gli appunti, le pagine delle slide che hai scelto, come immagini, e, con una registrazione, la trascrizione ad Anthropic. Con gli account Google personali, le condizioni di Antigravity permettono a Google di usare ciò che invii per migliorare i suoi modelli; rec2notes disattiva la telemetria di Antigravity, ma Google non ha detto che basti. La prima esecuzione con Antigravity chiede prima di inviare qualsiasi cosa.
 - **Chiedi prima di registrare.** Alcuni professori non permettono di registrare la lezione, o di condividerne la registrazione o la trascrizione.
 - **L'agente non ha strumenti**: niente file, niente comandi, niente web. Claude Code gira con `--tools ""` e `--strict-mcp-config`, quindi nemmeno server MCP, neanche i tuoi connettori di claude.ai. Antigravity gira in una cartella usa e getta con impostazioni che negano ogni strumento, cancellata dopo ogni chiamata, ma la sua ricerca web non si può disattivare: quando l'agente l'ha usata, l'esecuzione ti avvisa. Controlla quegli appunti: ciò che ha cercato non viene dalla lezione, e una trascrizione potrebbe contenere istruzioni rivolte all'agente.
 

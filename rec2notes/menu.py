@@ -10,7 +10,7 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
-from . import Abort, courses, doctor, i18n, merge, paths, setup, transcribe, ui
+from . import Abort, courses, doctor, i18n, merge, paths, setup, transcribe, ui, verify
 from .i18n import t
 
 
@@ -22,8 +22,10 @@ Parse = Callable[[list[str]], argparse.Namespace]
 CLAUDE_MODELS = (None, "opus", "sonnet", "haiku")  # None: Claude Code's default; the aliases follow its latest models
 
 
-def hub(console: ui.Console, ask: Callable[[str], str], parse: Parse, parse_create: Parse) -> argparse.Namespace | None:
-    """`parse` and `parse_create` turn the answers into the arguments of a run and of `rec2notes create`."""
+def hub(console: ui.Console, ask: Callable[[str], str], parse: Parse, parse_create: Parse,
+        parse_verify: Parse) -> argparse.Namespace | None:
+    """`parse`, `parse_create` and `parse_verify` turn the answers into the arguments of a run, of `rec2notes create`
+    and of `rec2notes verify`."""
     try:
         console.banner()
         while True:
@@ -36,6 +38,8 @@ def hub(console: ui.Console, ask: Callable[[str], str], parse: Parse, parse_crea
                         return _guided_run(console, ask, parse)
                     if what == "2":
                         return _guided_create(console, ask, parse_create)
+                    if what == "3":
+                        return _guided_verify(console, ask, parse_verify)
                 elif choice == "2":
                     doctor.run(console)
                 elif choice == "3":
@@ -65,14 +69,15 @@ def _options(console: ui.Console) -> None:
 
 
 def _run_choice(console, ask) -> str:
-    """"1" to complete a note, "2" to create one, "b" to go back."""
+    """"1" to complete a note, "2" to create one, "3" to check one against slides, "b" to go back."""
     console.line()
     console.line(f"  {console.style('1', ui.CYAN)}  {t('menu.run.complete')}")
     console.line(f"  {console.style('2', ui.CYAN)}  {t('menu.run.create')}")
+    console.line(f"  {console.style('3', ui.CYAN)}  {t('menu.run.verify')}")
     console.line(f"  {console.style('b', ui.CYAN)}  {t('menu.back')}")
     console.line()
-    while (choice := _ask(ask, "> ").lower()) not in ("1", "2", "b"):
-        console.line(t("menu.type_1_2_b"))
+    while (choice := _ask(ask, "> ").lower()) not in ("1", "2", "3", "b"):
+        console.line(t("menu.type_1_2_3_b"))
     return choice
 
 
@@ -105,16 +110,63 @@ def _guided_create(console, ask, parse) -> argparse.Namespace | None:
     ])
 
 
-def _confirm(console, ask, args: argparse.Namespace, course: courses.Course,
+def _guided_verify(console, ask, parse) -> argparse.Namespace | None:
+    """Slides only: a recording is for `rec2notes verify` on the command line."""
+    note = _ask_file(console, ask, t("menu.ask.note"))
+    slides = [_ask_pages(console, ask, _ask_pdf(console, ask, t("menu.ask.slides")), [])]
+    while more := _ask(ask, t("menu.ask.another_pdf"), allow_empty=True):
+        if (path := _file_or_none(console, more)) and _is_pdf(console, path):
+            slides.append(_ask_pages(console, ask, path, slides))
+    args = parse([str(note), *(f"{s.pdf}:{s.first}-{s.last}" for s in slides)])
+    tokens = verify.estimate_tokens(sum(s.pages for s in slides), note.read_text(encoding="utf-8"))
+    return _confirm(console, ask, args, None, [
+        (t("menu.row.note"), [note.name], ()),
+        (t("menu.row.slides"), [t("menu.slides_pages", name=s.pdf.name, first=s.first, last=s.last) for s in slides], ()),
+        (t("menu.row.estimate"), [verify.tokens_label(tokens)], ()),
+    ])
+
+
+def _ask_pages(console, ask, pdf: Path, before: list[verify.Slides]) -> verify.Slides:
+    """The pages of `pdf` to check, Enter for all; with `before`, the PDFs already given, within Claude's limit."""
+    count = verify.with_pages(verify.Slides(pdf)).last
+    while True:
+        answer = _ask(ask, t("menu.ask.pages", count=count), allow_empty=True).replace(" ", "")
+        slides = verify.parse_slides(f"{pdf}:{answer}") if answer else verify.Slides(pdf)
+        if answer and slides.first is None:
+            console.line(t("menu.bad_pages", count=count))
+            continue
+        try:
+            slides = verify.with_pages(slides)
+            verify.check_pages([*before, slides])
+            return slides
+        except Abort as e:
+            console.line(str(e))
+
+
+def _ask_pdf(console, ask, prompt: str) -> Path:
+    while True:
+        if (path := _ask_file(console, ask, prompt)) and _is_pdf(console, path):
+            return path
+
+
+def _is_pdf(console, path: Path) -> bool:
+    if path.suffix.lower() == ".pdf":
+        return True
+    console.line(t("menu.not_a_pdf", path=path))
+    return False
+
+
+def _confirm(console, ask, args: argparse.Namespace, course: courses.Course | None,
              rows: list[tuple[str, list[str], tuple]]) -> argparse.Namespace | None:
     """Show what will run, with the settings and anything that stops it; Enter starts it, `c` changes the
-    settings for this run only."""
+    settings for this run only (not the agent of a verify: it is Claude only; Whisper only with recordings).
+    `course` is None only without recordings."""
     sums = [transcribe.sha256_file(a) for a in args.audio]
     seconds = [transcribe.audio_seconds(a) for a in args.audio]
     while True:
         caches = [paths.transcript_cache(args.whisper_model, s, course.vocab) for s in sums]
         console.line()
-        console.summary([*rows, *_settings_rows(args), *_transcript_rows(seconds, caches)])
+        console.summary([*rows, *_settings_rows(args), *(_transcript_rows(seconds, caches) if args.audio else [])])
         console.line()
         problems = doctor.start_problems(args.agent, args.model, args.whisper_model, caches)
         if problems:
@@ -130,14 +182,15 @@ def _confirm(console, ask, args: argparse.Namespace, course: courses.Course,
             return None
         if answer != "c":
             return args
-        agent = _ask_agent(console, ask, args.agent)
+        agent = args.agent if args.verify else _ask_agent(console, ask, args.agent)
         if agent != args.agent:
             args.agent, args.model = agent, paths.model_choice(agent)
             args.effort = paths.setting_choice("effort") if agent == "claude" else None
         args.model = _ask_model(console, ask, args.agent, args.model)
         if args.agent == "claude":
             args.effort = _ask_effort(console, ask, args.effort)
-        args.whisper_model = _ask_whisper_model(console, ask, args.whisper_model) or args.whisper_model
+        if args.audio:
+            args.whisper_model = _ask_whisper_model(console, ask, args.whisper_model) or args.whisper_model
 
 
 def _settings_rows(args: argparse.Namespace) -> list[tuple[str, list[str], tuple]]:
@@ -145,7 +198,7 @@ def _settings_rows(args: argparse.Namespace) -> list[tuple[str, list[str], tuple
         (t("menu.row.agent"), [merge.AGENTS[args.agent].label], ()),
         (t("menu.row.model"), [_model_name(args.model)], ()),
         *([(t("menu.row.effort"), [args.effort], ())] if args.effort else []),
-        (t("menu.row.whisper"), [args.whisper_model], ()),
+        *([(t("menu.row.whisper"), [args.whisper_model], ())] if args.audio else []),
     ]
 
 

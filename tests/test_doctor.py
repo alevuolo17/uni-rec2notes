@@ -25,6 +25,7 @@ class Doctor(Sandbox):
         with mock.patch("importlib.metadata.version", return_value="9.9.9"):
             _, out, _ = self.rec2notes("doctor")
         self.assertRegex(out.splitlines()[1], r"^✓ rec2notes +9\.9\.9$")
+        self.assertRegex(out, r"✓ poppler +\S*pdftoppm")
 
     def test_details_start_in_one_column(self):
         _, out, _ = self.rec2notes("doctor")
@@ -173,6 +174,7 @@ class Doctor(Sandbox):
         self.assertEqual(code, 1)
         self.assertIn("Claude Code", out)
         self.assertIn("not checked", out)
+        self.assertRegex(out, r"⚠ poppler +not installed; only checking against slides needs it\n +→ install it with")
 
 
 class HubDoctor(Hub):

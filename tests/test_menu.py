@@ -3,7 +3,7 @@ import os
 import shutil
 from unittest import mock
 
-from rec2notes import cli, courses, i18n, menu, merge, paths, transcribe, ui
+from rec2notes import cli, courses, i18n, menu, merge, paths, transcribe, ui, verify
 
 from .helpers import MODEL, Sandbox
 
@@ -20,13 +20,13 @@ class Hub(Sandbox):
             except StopIteration:
                 raise EOFError from None
 
-        args = menu.hub(ui.Console(out, io.StringIO()), ask, cli.parse_args, cli.parse_create_args)
+        args = menu.hub(ui.Console(out, io.StringIO()), ask, cli.parse_args, cli.parse_create_args, cli.parse_verify_args)
         return args, out.getvalue(), prompts
 
     def test_quit(self):
         args, out, _ = self.hub("q")
         self.assertIsNone(args)
-        self.assertIn("Run: complete a note, or create one", out)
+        self.assertIn("Run: complete a note, create one", out)
 
     def test_end_of_input_quits(self):
         self.assertIsNone(self.hub()[0])
@@ -47,7 +47,7 @@ class Hub(Sandbox):
         args, out, _ = self.hub("1", "x", "b", "q")
         self.assertIsNone(args)
         self.assertIn("Create a note from a recording", out)
-        self.assertIn("Type 1, 2 or b.", out)
+        self.assertIn("Type 1, 2, 3 or b.", out)
         self.assertEqual(out.count("Doctor: check"), 2)  # back at the hub
 
     def test_create_asks_the_new_note_and_recording_then_confirms(self):
@@ -116,6 +116,40 @@ class Hub(Sandbox):
         second = self.make_audio("parte2.m4a", b"audio two")
         args, _, _ = self.hub("1", "1", str(self.note), "", str(self.audio), str(self.tmp / "nope.m4a"), str(second), "", "", "")
         self.assertEqual(args.audio, [self.audio, second])
+
+    def test_verify_asks_no_recording_nor_course(self):
+        slides = self.make_audio("Lezione 1.pdf", b"%PDF-1.4\n")
+        args, out, prompts = self.hub("1", "3", str(self.note), str(self.audio), str(slides), "", "", "")
+        self.assertTrue(args.verify)
+        self.assertEqual((args.note, args.slides, args.audio, args.course, args.agent),
+                         (self.note, [verify.Slides(slides, 1, 3)], [], None, "claude"))
+        self.assertIn(f"Not a PDF: {self.audio}", out)
+        self.assertIn("Pages to check, e.g. 12-30 (Enter: all 3): ", prompts)
+        self.assertIn("Slides         Lezione 1.pdf, pages 1-3", out)
+        self.assertRegex(out, r"Estimate +≈ \d+k tokens")
+        for absent in ("Recording", "  Whisper ", "Transcript"):
+            self.assertNotIn(absent, out)
+        self.assertFalse(any("course" in p.lower() or "recording" in p.lower() for p in prompts))
+
+    def test_verify_c_keeps_claude_and_asks_no_whisper_model(self):
+        os.environ["REC2NOTES_AGENT"] = "antigravity"
+        slides = self.make_audio("Lezione 1.pdf", b"%PDF-1.4\n")
+        args, out, prompts = self.hub("1", "3", str(self.note), str(slides), "", "", "c", "", "", "")
+        self.assertEqual((args.slides, args.audio, args.agent), ([verify.Slides(slides, 1, 3)], [], "claude"))
+        self.assertIn("Agent          Claude Code", out)
+        self.assertFalse(any("whisper" in p.lower() for p in prompts))
+
+    def test_verify_pages_are_asked_again_until_they_fit(self):
+        first = self.make_audio("Lezione 1.pdf", b"%PDF-1.4\npages 80\n")
+        second = self.make_audio("Lezione 2.pdf", b"%PDF-1.4\npages 40\n")
+        args, out, _ = self.hub("1", "3", str(self.note), str(first), "x", "0-5", "", str(second), "", "1 - 20",
+                                "", "")
+        self.assertEqual(args.slides, [verify.Slides(first, 1, 80), verify.Slides(second, 1, 20)])
+        self.assertIn("Type a page or a range of pages from 1 to 80, e.g. 12-30.", out)
+        self.assertIn("has 80 pages: pages 0-5 are not all in it", out)
+        self.assertIn("120 pages in all, over the 100 Claude takes in one request", out)
+        self.assertIn("Lezione 2.pdf, pages 1-20", out)
+        self.assertIn("Estimate       ≈ 90k tokens", out)
 
     def test_declining_returns_nothing(self):
         self.assertIsNone(self.hub("1", "1", str(self.note), "", str(self.audio), "", "", "n")[0])

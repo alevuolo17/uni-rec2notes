@@ -1,6 +1,7 @@
 """The replies of the fake agents, `claude` and `agy`, by prompt: the clean prompt (clean.md) returns its input under
-"Pulito.", the create prompt (create.md) a short note naming the course, and the merge prompt the note with an
-addition, a conflict footnote and a missed topic. FAKE_CLAUDE_DROP, in mode drop, is left out of the merged note."""
+"Pulito.", the create prompt (create.md) a short note naming the course, the verify prompt (verify.md)
+FAKE_VERIFY_REPLY or one finding, and the merge prompt the note with an addition, a conflict footnote and a missed
+topic. FAKE_CLAUDE_DROP, in mode drop, is left out of the merged note."""
 import os
 import re
 
@@ -8,6 +9,8 @@ import re
 def reply(prompt: str, stdin: str, mode: str) -> str:
     if prompt == "clean.md":
         return "Pulito.\n\n" + stdin
+    if prompt == "verify.md":
+        return os.environ.get("FAKE_VERIFY_REPLY", "- **Appunti:** «x» — **Correzione:** y — **Fonte:** slide 1: «z»\n")
     if prompt == "create.md":
         course = re.search(r"^name: (.*)$", stdin, re.M).group(1)
         return f"## Appunti di {course}\n\nNota creata dal transcript.\n"

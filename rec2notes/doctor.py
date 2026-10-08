@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import Abort, version, courses, merge, paths, transcribe, ui
+from . import Abort, version, courses, merge, paths, transcribe, ui, verify
 from .i18n import t
 
 AUTH_TIMEOUT = 20  # seconds; `claude auth status` may reach the network
@@ -22,7 +22,7 @@ def run(console: ui.Console) -> int:
         agents = [("fail", t("doctor.row.agent"), t("doctor.unknown_agent", agent=agent), t("doctor.use_one_of", names=", ".join(merge.AGENTS)))]
     else:
         agents = [agent_installed(agent), agent_logged_in(agent)]
-    results = [("ok", "rec2notes", version(), None), *agents, ffmpeg(), rec2notes_folder()]
+    results = [("ok", "rec2notes", version(), None), *agents, ffmpeg(), poppler(), rec2notes_folder()]
     if results[-1][0] == "ok":  # the rest lives in the folder
         results += [whisper_cli(), *models(paths.whisper_model_choice()), *folders()]
     width = max(ui.label_width(), *(len(label) for _, label, _, _ in results))
@@ -104,6 +104,13 @@ def ffmpeg() -> tuple:
     if shutil.which("ffmpeg"):
         return "ok", "ffmpeg", shutil.which("ffmpeg"), None
     return "fail", "ffmpeg", t("doctor.not_installed"), t("doctor.packages_hint")
+
+
+def poppler() -> tuple:
+    """A warning, not a failure: only `verify` needs it."""
+    if verify.poppler_installed():
+        return "ok", "poppler", shutil.which("pdftoppm"), None
+    return "warn", "poppler", t("doctor.only_verify"), verify.poppler_hint()
 
 
 def rec2notes_folder() -> tuple:

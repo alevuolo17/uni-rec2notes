@@ -17,6 +17,7 @@ PROMPTS = Path(__file__).resolve().parent / "prompts"
 MERGE_PROMPT = PROMPTS / "merge.md"
 CLEAN_PROMPT = PROMPTS / "clean.md"
 CREATE_PROMPT = PROMPTS / "create.md"
+VERIFY_PROMPT = PROMPTS / "verify.md"
 SETUP = "rec2notes setup"  # the command, for the fix hints
 
 VAD_MODEL = "silero-v5.1.2"

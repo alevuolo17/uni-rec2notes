@@ -32,6 +32,7 @@ changing anything you wrote: rec2notes checks that every word, symbol and line b
 - 🧭 **Missed topics** collected at the end, each with its timestamp and where it fits.
 - 🔒 **Your note is never touched**: the result is a new file next to it, `<note> (completo).md`.
 - 📝 **Missed the lecture?** rec2notes writes a study note from the recording alone.
+- 🔎 **Checked against the slides**: likely errors listed at the end of your note, each with its fix and source; you decide what to change.
 
 ```mermaid
 flowchart LR
@@ -148,7 +149,7 @@ rec2notes doctor
 Type `rec2notes` in a terminal. A menu opens; type a number or letter and press Enter:
 
 ```menu
-  1  Run: complete a note, or create one, from a recording
+  1  Run: complete a note, create one, or check one against the slides
   2  Doctor: check that everything is set up
   3  Courses: list them, add your own
   4  Settings: your rec2notes folder, agent, model, effort and Whisper
@@ -185,6 +186,14 @@ You get `<note> (completo).md` next to your note. Look for the `[^conflitto-N]` 
 
 For a lecture you have no notes of: **1 → 2**. Give the full path of the new note (its folder must exist), the recording, and the course. The note comes out at about a fifth of the transcript's length, organised by topic. Unclear audio is marked `[? hh:mm:ss]` and things shown only on a slide `(integra con slide)`.
 
+### Check a note against the slides
+
+For a finished note, completed or not: **1 → 3**. Give the note and the slides as PDF (more than one if the lecture used several; export PowerPoint, Keynote or ODP files to PDF first). For each PDF, rec2notes asks which pages to check, such as `12-30`; Enter checks them all. Pick only the lecture's pages: each page costs about 900 tokens, and Claude takes at most 100 pages at a time. Before it starts, the summary shows an estimate of the tokens it will send. This works with Claude Code only: with Antigravity saved, it still uses Claude.
+
+It needs Poppler, which turns the pages into images: `winget install oschwartz10612.Poppler` on Windows, `poppler-utils` on Fedora, Debian and Ubuntu, `poppler` on Arch. `rec2notes doctor` says whether it's there.
+
+The likely errors go into a *Correzioni (da verificare e applicare)* section at the end of the note itself: for each one, the passage, the fix, and its source (a slide's page number in the PDF, or general knowledge). Nothing else in the note changes: you decide what to fix. Checking again replaces that section. A copy of the note from before the check stays in the run folder, and if you edit the note while the check runs, the result goes into that folder instead.
+
 <details>
 <summary>All commands</summary>
 
@@ -196,6 +205,7 @@ Everything the menu does is also a command, for scripts or if you prefer typing:
 | `rec2notes NOTE AUDIO...` | Complete a note. `--clean` cleans it first; `--force` replaces an existing `(completo)` file; `--dry-run` shows what would be sent. |
 | `rec2notes create NOTE AUDIO...` | Write a new note from the recording. `--length PCT`: how long, as a share of the transcript (default 20). |
 | `rec2notes clean NOTE` | Only tidy a raw note into `<note> (pulito).md`. |
+| `rec2notes verify NOTE SLIDES.pdf[:N-M]... [AUDIO...]` | Check a note against the slides, only pages N to M if given, and against the recording if given. Claude Code only, so no `--agent`. |
 | `rec2notes course add\|edit\|list` | Manage your courses and their note folders. |
 | `rec2notes doctor` | Check the setup; its first line is your version (also `rec2notes --version`). |
 | `rec2notes setup` | Install or change Whisper (backend, model) and pick the language (`--language en` or `it`, which skips the question). Safe to rerun: it keeps your backend unless you pick another. |
@@ -208,7 +218,7 @@ Every run also takes `--course`, `--whisper-model`, `--agent`, `--model` and `--
 
 - **Transcription stays on your computer**: the recording never leaves it.
 - **What rec2notes keeps.** Each run keeps a copy of the note, the transcript and the agent's reply in `cache/runs` in rec2notes' folder (and your old `(completo)` file, when `--force` replaced it), for 30 days: the next run after that deletes them. Transcripts stay in `cache/transcripts`, so a rerun doesn't transcribe again, until `rec2notes uninstall`.
-- **The note goes to your agent.** A merge, `clean` or `create` sends the note, the transcript and the course's name and vocabulary to Anthropic (Claude Code) or Google (Antigravity), under your account's terms. On personal Google accounts, Antigravity's terms let Google use what you send to improve its models; rec2notes turns Antigravity's telemetry off, but Google hasn't said that this is enough. The first Antigravity run asks before sending anything.
+- **The note goes to your agent.** A merge, `clean` or `create` sends the note, the transcript and the course's name and vocabulary to Anthropic (Claude Code) or Google (Antigravity), under your account's terms. `verify` sends the note, the slide pages you picked, as images, and, with a recording, the transcript to Anthropic. On personal Google accounts, Antigravity's terms let Google use what you send to improve its models; rec2notes turns Antigravity's telemetry off, but Google hasn't said that this is enough. The first Antigravity run asks before sending anything.
 - **Ask before recording.** Some professors don't allow recording a lecture, or sharing the recording or its transcript.
 - **The agent gets no tools**: no files, no commands, no web. Claude Code runs with `--tools ""` and `--strict-mcp-config`, so no MCP servers either, not even your claude.ai connectors. Antigravity runs in a throwaway folder whose settings deny every tool, deleted after each call, but its web search can't be turned off: when the agent used it, the run warns you. Check that note: what it looked up isn't from the lecture, and a transcript could hold instructions aimed at the agent.
 

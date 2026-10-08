@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Fake pdftoppm -f N -l M -scale-to S -png PDF PREFIX: writes PREFIX-NNN.png for each page, padded as pdftoppm
+pads them (to the page count's digits), holding the page number; logs its arguments to $FAKE_POPPLER_LOG."""
+import json
+import os
+import re
+import sys
+
+args = sys.argv[1:]
+if log := os.environ.get("FAKE_POPPLER_LOG"):
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(json.dumps(args) + "\n")
+first, last, pdf, prefix = int(args[args.index("-f") + 1]), int(args[args.index("-l") + 1]), args[-2], args[-1]
+match = re.search(rb"pages (\d+)", open(pdf, "rb").read())
+digits = len(str(int(match[1]) if match else 3))
+for page in range(first, last + 1):
+    with open(f"{prefix}-{page:0{digits}d}.png", "wb") as f:
+        f.write(b"\x89PNG fake page %d" % page)

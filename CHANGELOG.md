@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0 (2026-10-08)
+
+- READMEs: verify asks the pages, shows an estimate, needs Poppler
+- verify: page ranges, sent as 960 px images, with a token estimate
+- Menu verify: no recording question, no Whisper or Transcript rows
+- READMEs: document verify; the hub's Run line names it
+- Add rec2notes verify and the menu's Run → 3
+- Add verify.py: list likely errors in a note against its slides
+
 ## 0.4.2 (2026-10-07)
 
 - Keep MCP servers out of claude calls with --strict-mcp-config

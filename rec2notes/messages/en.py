@@ -104,7 +104,7 @@ MESSAGES: dict[str, str] = {
     "path.settings": "`rec2notes` → Settings",
     "path.courses": "`rec2notes` → 3 Courses",
     # menu: the hub
-    "menu.hub.run": "Run: complete a note, or create one, from a recording",
+    "menu.hub.run": "Run: complete a note, create one, or check one against the slides",
     "menu.hub.doctor": "Doctor: check that everything is set up",
     "menu.hub.courses": "Courses: list them, add your own",
     "menu.hub.settings": "Settings: your rec2notes folder, agent, model, effort and Whisper",
@@ -113,18 +113,26 @@ MESSAGES: dict[str, str] = {
     "menu.not_an_option": "Not an option.",
     "menu.run.complete": "Complete a note from its recording",
     "menu.run.create": "Create a note from a recording, for a lecture with no notes",
-    "menu.type_1_2_b": "Type 1, 2 or b.",
+    "menu.run.verify": "Check a note against the slides, listing likely errors at its end",
+    "menu.type_1_2_3_b": "Type 1, 2, 3 or b.",
     # menu: a run
     "menu.ask.note": "Note (.md): ",
     "menu.ask.clean": "Clean the note first? It is copied to '(pulito)' and the copy is merged. [y/N] ",
     "menu.ask.recording": "Recording: ",
     "menu.ask.another_part": "Another part of the same lecture? Path, or Enter if none: ",
+    "menu.ask.slides": "Slides (.pdf): ",
+    "menu.ask.another_pdf": "Another PDF? Path, or Enter if none: ",
+    "menu.ask.pages": "Pages to check, e.g. 12-30 (Enter: all {count}): ",
+    "menu.bad_pages": "Type a page or a range of pages from 1 to {count}, e.g. 12-30.",
     "menu.ask.new_note": "New note (.md), its full path; ~ is your home folder: ",
     "menu.row.course": "Course",
     "menu.row.note": "Note",
     "menu.row.new_note": "New note",
     "menu.row.clean": "Clean",
     "menu.row.recording": "Recording",
+    "menu.row.slides": "Slides",
+    "menu.row.estimate": "Estimate",
+    "menu.slides_pages": "{name}, pages {first}-{last}",
     "menu.row.length": "Length",
     "menu.row.agent": "Agent",
     "menu.row.model": "Model",
@@ -148,6 +156,7 @@ MESSAGES: dict[str, str] = {
     "menu.no_such_folder": "No such folder: {folder}.{hint}",
     "menu.note_exists": "{note} already exists: pick another name.",
     "menu.not_a_file": "Not a file: {path}",
+    "menu.not_a_pdf": "Not a PDF: {path} (export the slides to PDF first)",
     # menu: pickers
     "menu.pick.course": "Which course is this?",
     "menu.pick.new_course": "A new course",
@@ -222,12 +231,15 @@ MESSAGES: dict[str, str] = {
     "step.write": "Write",
     "step.create": "Create",
     "step.clean": "Clean",
+    "step.slides": "Slides",
+    "step.verify": "Verify",
     "row.conflicts": "Conflicts",
     "row.missed": "Missed topics",
     "row.changed": "Changed",
     "row.tools": "Tools",
     "row.run": "Run",
     "row.length": "Length",
+    "row.findings": "Findings",
     "yes": "yes",
     "no": "no",
     "ui.left": "~{left} left ({at})",
@@ -236,6 +248,7 @@ MESSAGES: dict[str, str] = {
                             "Writes '<note> (completo).md' next to the note and never modifies the note.",
     "cli.help.epilog": "`rec2notes create NOTE AUDIO` writes a new note from a recording alone. "
                        "`rec2notes clean NOTE` cleans a raw note first. "
+                       "`rec2notes verify NOTE SLIDES.pdf [AUDIO]` checks a finished note against the slides. "
                        "`rec2notes doctor` checks that everything a run needs is in place; `rec2notes setup` installs it, `rec2notes uninstall` removes it.",
     "cli.help.note": "the formatted note (.md)",
     "cli.help.audio": "the recording; several files are parts of one lecture, in order",
@@ -260,6 +273,23 @@ MESSAGES: dict[str, str] = {
     "cli.create.note": "the note to create (.md); its folder tells the course",
     "cli.create.length": "the note's length to aim for, in %% of the transcript's words (default: {default})",
     "cli.create.force": "replace an existing NOTE, keeping a copy in the run directory",
+    "cli.verify.description": "Check a finished note against the lecture's slides, and its recording when given: likely "
+                              "errors are listed, with a fix and its source, in a '## Correzioni (da verificare e applicare)' "
+                              "section at the note's end (a rerun replaces it). The rest of the note is left as it is. "
+                              "Claude Code only.",
+    "cli.verify.note": "the finished note (.md)",
+    "cli.verify.files": "the slides (.pdf, one or more; slides.pdf:12-30 checks pages 12 to 30 only, at most {max} "
+                        "pages in all) and, optionally, the recording (several files are parts of one lecture, in order)",
+    "cli.verify.course": "course slug, for the recording's transcription (default: from the note's folder)",
+    "cli.verify.model": "Claude's model, e.g. opus or sonnet (default: $REC2NOTES_MODEL, else the one saved in "
+                        "{settings}, else Claude Code's)",
+    "cli.verify.effort": "Claude's effort: {efforts} (default: $REC2NOTES_EFFORT, else the one saved in {settings}, "
+                         "else high)",
+    "cli.verify.export_pdf": "{file}: export the slides to PDF first",
+    "cli.verify.no_pdf": "give the slides as at least one .pdf file",
+    "cli.verify.title": "Check against slides",
+    "cli.verify.slides": "{n} PDF · {pages} pages · {tokens}",
+    "cli.verify.left_alone": "{name} changed during the run, so it was left alone: the checked note is in {copy}",
     "cli.error.length": "--length must be between 5 and 60, not {length}",
     "cli.error.agent": "the agent must be one of {names}, not {agent!r}",
     "cli.error.effort": "the effort must be one of {names}, not {effort!r}",
@@ -287,6 +317,7 @@ MESSAGES: dict[str, str] = {
     # cli: a run
     "cli.note_not_found": "note not found: {note}",
     "cli.audio_not_found": "audio file not found: {audio}",
+    "cli.file_not_found": "file not found: {file}",
     "cli.unquoted": "Its path has spaces and was split by the shell: put it in quotes: \"{joined}\"",
     "cli.already_completed": "{name} already has conflict footnotes or missed topics, "
                              "so it looks like a completed note. Pass the original note instead.",
@@ -353,6 +384,7 @@ MESSAGES: dict[str, str] = {
     "doctor.row.folder": "rec2notes folder",
     "doctor.row.whisper_model": "Whisper model",
     "doctor.row.vad_model": "VAD model",
+    "doctor.only_verify": "not installed; only checking against slides needs it",
     "doctor.row.folders": "Folders",
     "doctor.unknown_agent": "unknown agent {agent!r}",
     "doctor.use_one_of": "use one of {names}",
@@ -410,6 +442,18 @@ MESSAGES: dict[str, str] = {
     "merge.blocked": "It tried to use {tools}, which rec2notes blocks: the transcript may contain instructions aimed at the agent.",
     "merge.twice": "{program} {problem} twice. The reply and {program}'s stderr are kept in {run_dir}{details}{blocked}",
     "merge.cannot_delete": "could not delete {folder}, which may hold a copy of the conversation ({reason}): delete it yourself",
+    # verify
+    "verify.claude_only": "{label} can't read PDFs: checking against slides works with Claude Code only (--agent claude)",
+    "verify.not_a_pdf": "{file} is not a PDF: export the slides to PDF first",
+    "verify.too_big": "the slides are about {mb} MB once encoded, over the {max} MB Claude takes in one request: check fewer pages",
+    "verify.bad_range": "{file} has {count} pages: pages {first}-{last} are not all in it",
+    "verify.too_many_pages": "{pages} pages in all, over the {max} Claude takes in one request: check fewer pages",
+    "verify.unreadable": "poppler could not read {file}: {error}",
+    "verify.timed_out": "it took too long",
+    "verify.no_poppler": "checking against slides needs poppler (pdfinfo and pdftoppm), which is not installed: {hint}",
+    "verify.poppler_linux": "install it with your package manager (poppler-utils on Fedora, Debian and Ubuntu, poppler on Arch)",
+    "verify.poppler_windows": "install it with `winget install oschwartz10612.Poppler`, then open a new terminal",
+    "verify.tokens": "≈ {k}k tokens",
     # uninstall
     "uninstall.description": "Delete your rec2notes folder's contents and the pointer to it, after asking. "
                              "Your notes are never touched.",

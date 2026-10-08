@@ -3,8 +3,11 @@
 
 It replies as replies.py says for the prompt, except in the modes empty, fail and stop-parent.
 FAKE_CLAUDE_MODE picks the reply: good (default), empty, empty-then-good, fail, logged-out (`auth status`
-fails), drop (the good reply without the first occurrence of FAKE_CLAUDE_DROP), or stop-parent (sends SIGTERM to its parent, as if rec2notes were stopped, and keeps "working").
-Every call appends its arguments, as a JSON line, to FAKE_CLAUDE_LOG.
+fails), drop (the good reply without the first occurrence of FAKE_CLAUDE_DROP), stop-parent (sends SIGTERM to its parent, as if rec2notes were stopped, and keeps "working"), or error-result (stream-json
+only: a result event with is_error).
+Every call appends its arguments, as a JSON line, to FAKE_CLAUDE_LOG. With --input-format stream-json it reads one
+message, replies to its last text block with events, and saves the message to FAKE_CLAUDE_MESSAGE when set.
+FAKE_CLAUDE_TOUCH names a file the call appends a line to, as if the user edited it meanwhile.
 """
 import json
 import os
@@ -23,6 +26,16 @@ with open(log, "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
 
 stdin = sys.stdin.read()
+stream = "--input-format" in sys.argv
+if stream:
+    message = json.loads(stdin)
+    if os.environ.get("FAKE_CLAUDE_MESSAGE"):
+        with open(os.environ["FAKE_CLAUDE_MESSAGE"], "w", encoding="utf-8") as f:
+            json.dump(message, f)
+    stdin = [b for b in message["message"]["content"] if b["type"] == "text"][-1]["text"]
+if os.environ.get("FAKE_CLAUDE_TOUCH"):
+    with open(os.environ["FAKE_CLAUDE_TOUCH"], "a", encoding="utf-8") as f:
+        f.write("Modifica fatta durante la verifica.\n")
 prompt = os.path.basename(sys.argv[sys.argv.index("--system-prompt-file") + 1])
 mode = os.environ.get("FAKE_CLAUDE_MODE", "good")
 if mode == "empty-then-good":
@@ -34,4 +47,11 @@ if mode == "fail":
     sys.exit("fake claude: something went wrong")
 if mode == "empty":
     sys.exit(0)
-sys.stdout.write(replies.reply(prompt, stdin, mode))
+reply = replies.reply(prompt, stdin, mode)
+if stream:
+    result = {"type": "result", "is_error": mode == "error-result",
+              "result": "Prompt is too long" if mode == "error-result" else reply}
+    for event in ({"type": "system", "subtype": "init", "tools": [], "mcp_servers": []}, result):
+        print(json.dumps(event))
+else:
+    sys.stdout.write(reply)
